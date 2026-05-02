@@ -1,7 +1,7 @@
 import hashlib
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -25,8 +25,8 @@ FHIR_UPLOAD_TRANSFORM_VERSION = "fhir-upload-v1"
 def ingest_fhir_bundle(
     bundle: Dict[str, Any],
     db: Session,
-    filename: str | None = None,
-    content_hash: str | None = None,
+    filename: Optional[str] = None,
+    content_hash: Optional[str] = None,
 ) -> Dict[str, Any]:
     parsed_data = parse_fhir_bundle(bundle)
     patient_payload = parsed_data.get("patient")
@@ -303,7 +303,7 @@ def _add_curated_source(
     curated_record_id: int,
     source_system_id: int,
     ingestion_batch_id: int,
-    raw_record_id: str | None = None,
+    raw_record_id: Optional[str] = None,
 ) -> None:
     db.add(
         CuratedRecordSource(

@@ -1,0 +1,24 @@
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local environment files
+.env
+backend/.env
+
+# Local test databases
+backend/tests/test_clinsight.db
+
+# Frontend
+frontend/.next/
+frontend/node_modules/

@@ -4,6 +4,7 @@ import sys
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from typing import Optional
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
@@ -369,7 +370,7 @@ def add_lab(
     unit: str,
     reference_range: str,
     encounter_date: date,
-    suffix: str | None = None,
+    suffix: Optional[str] = None,
 ) -> None:
     result_value = str(value).rstrip("0").rstrip(".")
     abnormal_flag = "H" if is_high_lab(lab_code, float(value)) else "N"

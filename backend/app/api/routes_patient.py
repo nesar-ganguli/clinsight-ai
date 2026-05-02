@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
+from typing import Optional
 
 from app.core.database import get_db
 from app.models.patient import Patient
@@ -11,7 +12,7 @@ router = APIRouter()
 
 @router.get("/patients", response_model=PatientListResponse)
 def list_patients(
-    search: str | None = Query(default=None, min_length=1, max_length=100),
+    search: Optional[str] = Query(default=None, min_length=1, max_length=100),
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db)
