@@ -91,7 +91,11 @@ def _list_dbt_patient_summaries(
             full_name,
             gender,
             birth_date,
+            source_type,
+            source_system,
+            source_record_id,
             ingestion_batch_id,
+            transformed_at,
             source_patient_id
         from {_clinical_table_name(db, "patients")}
     """
@@ -138,7 +142,11 @@ def _get_dbt_patient(db: Session, patient_id: int):
                 full_name,
                 gender,
                 birth_date,
+                source_type,
+                source_system,
+                source_record_id,
                 ingestion_batch_id,
+                transformed_at,
                 source_patient_id
             from {_clinical_table_name(db, "patients")}
             where id = :patient_id
@@ -184,6 +192,7 @@ def _condition_row(row) -> Dict[str, Any]:
         "condition_name": row.get("condition_name"),
         "clinical_status": row.get("clinical_status"),
         "onset_date": _as_text(row.get("onset_date")),
+        **_source_metadata(row),
     }
 
 
@@ -196,6 +205,7 @@ def _observation_row(row) -> Dict[str, Any]:
         "value": row.get("value"),
         "unit": row.get("unit"),
         "effective_date": _as_text(row.get("effective_date")),
+        **_source_metadata(row),
     }
 
 
@@ -208,6 +218,7 @@ def _encounter_row(row) -> Dict[str, Any]:
         "encounter_type": row.get("encounter_type"),
         "period_start": _as_text(row.get("period_start")),
         "period_end": _as_text(row.get("period_end")),
+        **_source_metadata(row),
     }
 
 
@@ -220,6 +231,7 @@ def _medication_row(row) -> Dict[str, Any]:
         "medication_code": row.get("medication_code"),
         "medication_name": row.get("medication_name"),
         "authored_on": _as_text(row.get("authored_on")),
+        **_source_metadata(row),
     }
 
 
@@ -233,6 +245,17 @@ def _allergy_row(row) -> Dict[str, Any]:
         "allergy_name": row.get("allergy_name"),
         "criticality": row.get("criticality"),
         "recorded_date": _as_text(row.get("recorded_date")),
+        **_source_metadata(row),
+    }
+
+
+def _source_metadata(row) -> Dict[str, Any]:
+    return {
+        "source_type": row.get("source_type"),
+        "source_system": row.get("source_system"),
+        "source_record_id": row.get("source_record_id"),
+        "ingestion_batch_id": row.get("ingestion_batch_id"),
+        "transformed_at": _as_text(row.get("transformed_at")),
     }
 
 

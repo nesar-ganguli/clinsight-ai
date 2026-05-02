@@ -1,6 +1,8 @@
 import json
 from types import SimpleNamespace
 
+from app.core.database import SessionLocal
+from app.models.source_system import SourceSystem
 from app.services.fhir_parser import parse_fhir_bundle
 from scripts.generate_fhir_bundles import build_fhir_bundle, write_fhir_bundles
 
@@ -14,6 +16,7 @@ def test_build_fhir_bundle_preserves_resource_references():
 
     assert bundle["resourceType"] == "Bundle"
     assert bundle["type"] == "collection"
+    assert bundle["meta"]["source"] == "clinsight-generated-fhir-bundle"
     assert resource_types == [
         "Patient",
         "Encounter",
@@ -71,6 +74,13 @@ def test_write_fhir_bundles_creates_uploadable_json(client, tmp_path):
         "MedicationRequest": 1,
         "AllergyIntolerance": 1,
     }
+
+    db = SessionLocal()
+    try:
+        source_system = db.query(SourceSystem).filter(SourceSystem.name == "ClinSight Generated FHIR Bundle").one()
+        assert source_system.system_type == "generated_fhir_bundle"
+    finally:
+        db.close()
 
 
 def synthetic_patient():

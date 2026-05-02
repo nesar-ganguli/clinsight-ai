@@ -19,7 +19,9 @@ from app.services.fhir_parser import parse_fhir_bundle
 
 
 FHIR_UPLOAD_SOURCE_NAME = "ClinSight FHIR Upload"
+GENERATED_FHIR_SOURCE_NAME = "ClinSight Generated FHIR Bundle"
 FHIR_UPLOAD_TRANSFORM_VERSION = "fhir-upload-v1"
+GENERATED_FHIR_SOURCE_MARKER = "clinsight-generated-fhir-bundle"
 
 
 def ingest_fhir_bundle(
@@ -34,15 +36,16 @@ def ingest_fhir_bundle(
     if not patient_payload:
         raise ValueError("No Patient resource found in bundle")
 
-    source_system = _get_or_create_fhir_upload_source(db)
+    source_system = _get_or_create_fhir_source(db, bundle)
+    transformed_at = datetime.now(timezone.utc)
     ingestion_batch = IngestionBatch(
         source_system_id=source_system.id,
-        ingestion_type="fhir_bundle",
+        ingestion_type=source_system.system_type,
         filename=filename,
         content_hash=content_hash or _hash_bundle(bundle),
         status="processed",
         record_count=sum(parsed_data.get("resource_counts", {}).values()),
-        processed_at=datetime.now(timezone.utc)
+        processed_at=transformed_at
     )
     db.add(ingestion_batch)
     db.flush()
@@ -65,6 +68,13 @@ def ingest_fhir_bundle(
         patient.full_name = patient_payload.get("full_name")
         patient.gender = patient_payload.get("gender")
         patient.birth_date = patient_payload.get("birth_date")
+        _apply_source_metadata(
+            patient,
+            source_system,
+            ingestion_batch.id,
+            fhir_patient_id,
+            transformed_at,
+        )
 
         db.query(AllergyIntolerance).filter(AllergyIntolerance.patient_id == patient.id).delete()
         db.query(Condition).filter(Condition.patient_id == patient.id).delete()
@@ -76,7 +86,14 @@ def ingest_fhir_bundle(
             fhir_patient_id=fhir_patient_id,
             full_name=patient_payload.get("full_name"),
             gender=patient_payload.get("gender"),
-            birth_date=patient_payload.get("birth_date")
+            birth_date=patient_payload.get("birth_date"),
+        )
+        _apply_source_metadata(
+            patient,
+            source_system,
+            ingestion_batch.id,
+            fhir_patient_id,
+            transformed_at,
         )
         db.add(patient)
         db.flush()
@@ -100,6 +117,13 @@ def ingest_fhir_bundle(
             clinical_status=cond.get("clinical_status"),
             onset_date=cond.get("onset_date")
         )
+        _apply_source_metadata(
+            condition,
+            source_system,
+            ingestion_batch.id,
+            cond.get("fhir_condition_id"),
+            transformed_at,
+        )
         db.add(condition)
         db.flush()
         _add_curated_source(
@@ -120,6 +144,13 @@ def ingest_fhir_bundle(
             value=obs.get("value"),
             unit=obs.get("unit"),
             effective_date=obs.get("effective_date")
+        )
+        _apply_source_metadata(
+            observation,
+            source_system,
+            ingestion_batch.id,
+            obs.get("fhir_observation_id"),
+            transformed_at,
         )
         db.add(observation)
         db.flush()
@@ -142,6 +173,13 @@ def ingest_fhir_bundle(
             period_start=encounter.get("period_start"),
             period_end=encounter.get("period_end")
         )
+        _apply_source_metadata(
+            encounter_record,
+            source_system,
+            ingestion_batch.id,
+            encounter.get("fhir_encounter_id"),
+            transformed_at,
+        )
         db.add(encounter_record)
         db.flush()
         _add_curated_source(
@@ -162,6 +200,13 @@ def ingest_fhir_bundle(
             medication_code=medication.get("medication_code"),
             medication_name=medication.get("medication_name"),
             authored_on=medication.get("authored_on")
+        )
+        _apply_source_metadata(
+            medication_request,
+            source_system,
+            ingestion_batch.id,
+            medication.get("fhir_medication_request_id"),
+            transformed_at,
         )
         db.add(medication_request)
         db.flush()
@@ -185,6 +230,13 @@ def ingest_fhir_bundle(
             criticality=allergy.get("criticality"),
             recorded_date=allergy.get("recorded_date")
         )
+        _apply_source_metadata(
+            allergy_intolerance,
+            source_system,
+            ingestion_batch.id,
+            allergy.get("fhir_allergy_id"),
+            transformed_at,
+        )
         db.add(allergy_intolerance)
         db.flush()
         _add_curated_source(
@@ -206,25 +258,73 @@ def ingest_fhir_bundle(
     }
 
 
-def _get_or_create_fhir_upload_source(db: Session) -> SourceSystem:
+def _get_or_create_fhir_source(db: Session, bundle: Dict[str, Any]) -> SourceSystem:
+    if _is_generated_fhir_bundle(bundle):
+        return _get_or_create_source_system(
+            db,
+            name=GENERATED_FHIR_SOURCE_NAME,
+            system_type="generated_fhir_bundle",
+            facility_name="ClinSight synthetic FHIR generator",
+            external_system_id=GENERATED_FHIR_SOURCE_MARKER,
+        )
+
+    return _get_or_create_source_system(
+        db,
+        name=FHIR_UPLOAD_SOURCE_NAME,
+        system_type="fhir_upload",
+        facility_name="ClinSight demo upload",
+        external_system_id="clinsight-fhir-upload",
+    )
+
+
+def _get_or_create_source_system(
+    db: Session,
+    name: str,
+    system_type: str,
+    facility_name: str,
+    external_system_id: str,
+) -> SourceSystem:
     source_system = (
         db.query(SourceSystem)
-        .filter(SourceSystem.name == FHIR_UPLOAD_SOURCE_NAME)
+        .filter(SourceSystem.name == name)
         .first()
     )
     if source_system:
         return source_system
 
     source_system = SourceSystem(
-        name=FHIR_UPLOAD_SOURCE_NAME,
-        system_type="fhir_upload",
-        facility_name="ClinSight demo upload",
-        external_system_id="clinsight-fhir-upload",
+        name=name,
+        system_type=system_type,
+        facility_name=facility_name,
+        external_system_id=external_system_id,
         is_active=True,
     )
     db.add(source_system)
     db.flush()
     return source_system
+
+
+def _is_generated_fhir_bundle(bundle: Dict[str, Any]) -> bool:
+    meta = bundle.get("meta", {})
+    if meta.get("source") == GENERATED_FHIR_SOURCE_MARKER:
+        return True
+
+    tags = meta.get("tag", [])
+    return any(tag.get("code") == "generated-fhir-bundle" for tag in tags if isinstance(tag, dict))
+
+
+def _apply_source_metadata(
+    record: Any,
+    source_system: SourceSystem,
+    ingestion_batch_id: int,
+    source_record_id: Optional[str],
+    transformed_at: datetime,
+) -> None:
+    record.source_type = source_system.system_type
+    record.source_system = source_system.name
+    record.source_record_id = source_record_id
+    record.ingestion_batch_id = str(ingestion_batch_id)
+    record.transformed_at = transformed_at
 
 
 def _hash_bundle(bundle: Dict[str, Any]) -> str:

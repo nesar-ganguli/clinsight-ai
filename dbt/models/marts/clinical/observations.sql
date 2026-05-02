@@ -16,9 +16,11 @@ select
         when result_status in ('final', 'corrected', 'preliminary', 'amended') then result_status
         else 'unknown'
     end as status,
+    'hospital_database'::text as source_type,
     source_system,
     lab_source_id as source_record_id,
     ingestion_batch_id,
+    current_timestamp as transformed_at,
     ingested_at,
     patient_id as source_patient_id,
     encounter_id as source_encounter_id,

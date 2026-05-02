@@ -13,6 +13,6 @@ The clinical marts transform hospital operational staging views into app-shaped 
 | `medication_requests` | `stg_medications` | `MedicationRequest` | Medication orders map to medication requests with intent `order` and normalized order status. |
 | `allergies` | `stg_allergies` | `AllergyIntolerance` | Operational allergies map to allergy code/name/status, verification status, criticality, and recorded date. |
 
-All curated models preserve source traceability with `source_system`, `source_record_id`, `ingestion_batch_id`, and `ingested_at`. Stable generated IDs are derived from staging record identifiers with deterministic hashes so reruns for the same raw batch produce the same curated keys.
+All curated models preserve source traceability with `source_type`, `source_system`, `source_record_id`, `ingestion_batch_id`, `transformed_at`, and `ingested_at`. Hospital operational rows use `source_type = 'hospital_database'`. Stable generated IDs are derived from staging record identifiers with deterministic hashes so reruns for the same raw batch produce the same curated keys.
 
 {% enddocs %}

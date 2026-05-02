@@ -24,6 +24,13 @@ models:
                 values: ["female", "male", "unknown", "other"]
       - name: birth_date
         description: "Patient birth date."
+      - name: source_type
+        description: "Source category for the curated patient record."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["hospital_database"]
       - name: source_system
         description: "Operational source system that supplied the patient row."
         tests:
@@ -34,6 +41,10 @@ models:
           - not_null
       - name: ingestion_batch_id
         description: "Raw ingestion batch that produced the row."
+        tests:
+          - not_null
+      - name: transformed_at
+        description: "Timestamp when dbt produced the curated patient projection."
         tests:
           - not_null
 
@@ -62,6 +73,13 @@ models:
                 values: ["finished", "in-progress", "unknown"]
       - name: encounter_class
         description: "Encounter class label for operational hospital encounters."
+      - name: source_type
+        description: "Source category for the curated encounter record."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["hospital_database"]
       - name: source_system
         description: "Operational source system that supplied the encounter row."
         tests:
@@ -72,6 +90,10 @@ models:
           - not_null
       - name: ingestion_batch_id
         description: "Raw ingestion batch that produced the row."
+        tests:
+          - not_null
+      - name: transformed_at
+        description: "Timestamp when dbt produced the curated encounter projection."
         tests:
           - not_null
 
@@ -104,6 +126,13 @@ models:
           - accepted_values:
               arguments:
                 values: ["active", "resolved"]
+      - name: source_type
+        description: "Source category for the curated condition record."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["hospital_database"]
       - name: source_system
         description: "Operational source system that supplied the diagnosis row."
         tests:
@@ -114,6 +143,10 @@ models:
           - not_null
       - name: ingestion_batch_id
         description: "Raw ingestion batch that produced the row."
+        tests:
+          - not_null
+      - name: transformed_at
+        description: "Timestamp when dbt produced the curated condition projection."
         tests:
           - not_null
 
@@ -150,6 +183,13 @@ models:
           - accepted_values:
               arguments:
                 values: ["final", "corrected", "preliminary", "amended", "unknown"]
+      - name: source_type
+        description: "Source category for the curated observation record."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["hospital_database"]
       - name: source_system
         description: "Operational source system that supplied the lab row."
         tests:
@@ -160,6 +200,10 @@ models:
           - not_null
       - name: ingestion_batch_id
         description: "Raw ingestion batch that produced the row."
+        tests:
+          - not_null
+      - name: transformed_at
+        description: "Timestamp when dbt produced the curated observation projection."
         tests:
           - not_null
 
@@ -197,6 +241,13 @@ models:
         description: "Medication code mapped from operational order code."
       - name: medication_name
         description: "Medication display name."
+      - name: source_type
+        description: "Source category for the curated medication request record."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["hospital_database"]
       - name: source_system
         description: "Operational source system that supplied the medication row."
         tests:
@@ -207,6 +258,10 @@ models:
           - not_null
       - name: ingestion_batch_id
         description: "Raw ingestion batch that produced the row."
+        tests:
+          - not_null
+      - name: transformed_at
+        description: "Timestamp when dbt produced the curated medication request projection."
         tests:
           - not_null
 
@@ -250,6 +305,13 @@ models:
           - accepted_values:
               arguments:
                 values: ["high", "low", "unable-to-assess"]
+      - name: source_type
+        description: "Source category for the curated allergy record."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["hospital_database"]
       - name: source_system
         description: "Operational source system that supplied the allergy row."
         tests:
@@ -260,5 +322,9 @@ models:
           - not_null
       - name: ingestion_batch_id
         description: "Raw ingestion batch that produced the row."
+        tests:
+          - not_null
+      - name: transformed_at
+        description: "Timestamp when dbt produced the curated allergy projection."
         tests:
           - not_null

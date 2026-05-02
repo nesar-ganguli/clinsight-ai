@@ -20,9 +20,11 @@ select
         else 'unable-to-assess'
     end as criticality,
     recorded_at as recorded_date,
+    'hospital_database'::text as source_type,
     source_system,
     allergy_source_id as source_record_id,
     ingestion_batch_id,
+    current_timestamp as transformed_at,
     ingested_at,
     patient_id as source_patient_id,
     allergen_type,

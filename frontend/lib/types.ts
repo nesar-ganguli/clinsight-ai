@@ -1,4 +1,12 @@
-export type PatientSummary = {
+export type SourceMetadata = {
+  source_type: string | null;
+  source_system: string | null;
+  source_record_id: string | null;
+  ingestion_batch_id: string | null;
+  transformed_at: string | null;
+};
+
+export type PatientSummary = SourceMetadata & {
   id: number;
   fhir_patient_id: string | null;
   full_name: string | null;
@@ -6,7 +14,7 @@ export type PatientSummary = {
   birth_date: string | null;
 };
 
-export type Condition = {
+export type Condition = SourceMetadata & {
   id: number;
   fhir_condition_id: string | null;
   condition_code: string | null;
@@ -15,7 +23,7 @@ export type Condition = {
   onset_date: string | null;
 };
 
-export type Observation = {
+export type Observation = SourceMetadata & {
   id: number;
   fhir_observation_id: string | null;
   observation_code: string | null;
@@ -25,7 +33,7 @@ export type Observation = {
   effective_date: string | null;
 };
 
-export type Encounter = {
+export type Encounter = SourceMetadata & {
   id: number;
   fhir_encounter_id: string | null;
   status: string | null;
@@ -35,7 +43,7 @@ export type Encounter = {
   period_end: string | null;
 };
 
-export type MedicationRequest = {
+export type MedicationRequest = SourceMetadata & {
   id: number;
   fhir_medication_request_id: string | null;
   status: string | null;
@@ -45,7 +53,7 @@ export type MedicationRequest = {
   authored_on: string | null;
 };
 
-export type AllergyIntolerance = {
+export type AllergyIntolerance = SourceMetadata & {
   id: number;
   fhir_allergy_id: string | null;
   clinical_status: string | null;
@@ -91,7 +99,7 @@ export type QualityAlertsResponse = {
   alerts: QualityAlert[];
 };
 
-export type InsightCitation = {
+export type InsightCitation = SourceMetadata & {
   id: string;
   resource_type: string;
   record_id: number;

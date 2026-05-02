@@ -6,6 +6,7 @@ from sqlalchemy import text
 from app.core.database import SessionLocal
 from app.models.curated_record_source import CuratedRecordSource
 from app.models.ingestion_batch import IngestionBatch
+from app.models.patient import Patient
 from app.models.patient_source_identifier import PatientSourceIdentifier
 from app.models.source_system import SourceSystem
 
@@ -112,6 +113,7 @@ def test_upload_bundle_records_multisource_ingestion_metadata(client):
 
         assert source_system.system_type == "fhir_upload"
         assert ingestion_batch.source_system_id == source_system.id
+        assert ingestion_batch.ingestion_type == "fhir_upload"
         assert ingestion_batch.filename == "patient_bundle_1.json"
         assert ingestion_batch.status == "processed"
         assert ingestion_batch.record_count == sum(payload["resource_counts"].values())
@@ -119,6 +121,12 @@ def test_upload_bundle_records_multisource_ingestion_metadata(client):
         assert patient_identifier.identifier_type == "fhir_patient_id"
         assert patient_identifier.identifier_value == "patient-001"
         assert len(curated_sources) == sum(payload["resource_counts"].values())
+        patient = db.query(Patient).filter(Patient.id == payload["patient_id"]).one()
+        assert patient.source_type == "fhir_upload"
+        assert patient.source_system == "ClinSight FHIR Upload"
+        assert patient.source_record_id == "patient-001"
+        assert patient.ingestion_batch_id == str(ingestion_batch.id)
+        assert patient.transformed_at is not None
         assert {source.curated_table_name for source in curated_sources} == {
             "patients",
             "conditions",
@@ -204,6 +212,8 @@ def test_ai_insights_endpoint_returns_cited_report(client):
     assert payload["generated_by"] == "ClinSight grounded insight rules v1"
     assert payload["summary_sections"]
     assert payload["care_gaps"]
+    assert all(citation["source_system"] == "ClinSight FHIR Upload" for citation in payload["citations"])
+    assert all(citation["ingestion_batch_id"] is not None for citation in payload["citations"])
     assert payload["evaluation"]["unsupported_claims"] == 0
     assert payload["evaluation"]["unresolved_citations"] == 0
     assert all(
@@ -249,6 +259,8 @@ def test_dbt_curated_patient_surfaces_in_api_quality_and_insights(client):
         assert insights_payload["patient_id"] == 900001
         assert insights_payload["summary_sections"]
         assert insights_payload["care_gaps"]
+        assert all(citation["source_system"] == "internal_hospital_ods" for citation in insights_payload["citations"])
+        assert all(citation["ingestion_batch_id"] == "test-batch-001" for citation in insights_payload["citations"])
         assert insights_payload["evaluation"]["unsupported_claims"] == 0
     finally:
         drop_test_clinical_tables(db)
@@ -275,7 +287,11 @@ def create_test_clinical_tables(db):
             full_name text,
             gender text,
             birth_date text,
+            source_type text,
+            source_system text,
+            source_record_id text,
             ingestion_batch_id text,
+            transformed_at text,
             source_patient_id text
         )
     """))
@@ -287,7 +303,12 @@ def create_test_clinical_tables(db):
             condition_code text,
             condition_name text,
             clinical_status text,
-            onset_date text
+            onset_date text,
+            source_type text,
+            source_system text,
+            source_record_id text,
+            ingestion_batch_id text,
+            transformed_at text
         )
     """))
     db.execute(text("""
@@ -299,7 +320,12 @@ def create_test_clinical_tables(db):
             observation_name text,
             value text,
             unit text,
-            effective_date text
+            effective_date text,
+            source_type text,
+            source_system text,
+            source_record_id text,
+            ingestion_batch_id text,
+            transformed_at text
         )
     """))
     db.execute(text("""
@@ -311,7 +337,12 @@ def create_test_clinical_tables(db):
             encounter_class text,
             encounter_type text,
             period_start text,
-            period_end text
+            period_end text,
+            source_type text,
+            source_system text,
+            source_record_id text,
+            ingestion_batch_id text,
+            transformed_at text
         )
     """))
     db.execute(text("""
@@ -323,7 +354,12 @@ def create_test_clinical_tables(db):
             intent text,
             medication_code text,
             medication_name text,
-            authored_on text
+            authored_on text,
+            source_type text,
+            source_system text,
+            source_record_id text,
+            ingestion_batch_id text,
+            transformed_at text
         )
     """))
     db.execute(text("""
@@ -336,7 +372,12 @@ def create_test_clinical_tables(db):
             allergy_code text,
             allergy_name text,
             criticality text,
-            recorded_date text
+            recorded_date text,
+            source_type text,
+            source_system text,
+            source_record_id text,
+            ingestion_batch_id text,
+            transformed_at text
         )
     """))
     db.commit()
@@ -345,44 +386,60 @@ def create_test_clinical_tables(db):
 def seed_test_clinical_patient(db):
     db.execute(text("""
         insert into clinical_patients (
-            id, fhir_patient_id, full_name, gender, birth_date, ingestion_batch_id, source_patient_id
+            id, fhir_patient_id, full_name, gender, birth_date, source_type, source_system,
+            source_record_id, ingestion_batch_id, transformed_at, source_patient_id
         ) values (
-            900001, null, 'Avery Morgan', 'female', '1978-04-12', 'test-batch-001', 'MRN900001'
+            900001, null, 'Avery Morgan', 'female', '1978-04-12', 'hospital_database',
+            'internal_hospital_ods', 'MRN900001', 'test-batch-001', '2026-05-02T21:00:00', 'MRN900001'
         )
     """))
     db.execute(text("""
         insert into clinical_conditions (
-            id, patient_id, fhir_condition_id, condition_code, condition_name, clinical_status, onset_date
+            id, patient_id, fhir_condition_id, condition_code, condition_name, clinical_status, onset_date,
+            source_type, source_system, source_record_id, ingestion_batch_id, transformed_at
         ) values (
-            910001, 900001, null, 'E11.9', 'Type 2 Diabetes Mellitus Without Complications', 'active', '2026-01-01'
+            910001, 900001, null, 'E11.9', 'Type 2 Diabetes Mellitus Without Complications', 'active',
+            '2026-01-01', 'hospital_database', 'internal_hospital_ods', 'DX900001', 'test-batch-001',
+            '2026-05-02T21:00:00'
         )
     """))
     db.execute(text("""
         insert into clinical_observations (
-            id, patient_id, fhir_observation_id, observation_code, observation_name, value, unit, effective_date
+            id, patient_id, fhir_observation_id, observation_code, observation_name, value, unit, effective_date,
+            source_type, source_system, source_record_id, ingestion_batch_id, transformed_at
         ) values
-            (920001, 900001, null, '4548-4', 'Hemoglobin A1c', '8.2', '%', '2026-04-01T14:00:00'),
-            (920002, 900001, null, '2345-7', 'Glucose', '140', 'mg/dL', '2026-04-01T14:00:00')
+            (920001, 900001, null, '4548-4', 'Hemoglobin A1c', '8.2', '%', '2026-04-01T14:00:00',
+                'hospital_database', 'internal_hospital_ods', 'LAB900001', 'test-batch-001', '2026-05-02T21:00:00'),
+            (920002, 900001, null, '2345-7', 'Glucose', '140', 'mg/dL', '2026-04-01T14:00:00',
+                'hospital_database', 'internal_hospital_ods', 'LAB900002', 'test-batch-001', '2026-05-02T21:00:00')
     """))
     db.execute(text("""
         insert into clinical_encounters (
-            id, patient_id, fhir_encounter_id, status, encounter_class, encounter_type, period_start, period_end
+            id, patient_id, fhir_encounter_id, status, encounter_class, encounter_type, period_start, period_end,
+            source_type, source_system, source_record_id, ingestion_batch_id, transformed_at
         ) values (
-            930001, 900001, null, 'finished', 'hospital', 'office_visit', '2026-04-01T08:00:00', '2026-04-01T16:00:00'
+            930001, 900001, null, 'finished', 'hospital', 'office_visit', '2026-04-01T08:00:00',
+            '2026-04-01T16:00:00', 'hospital_database', 'internal_hospital_ods', 'ENC900001',
+            'test-batch-001', '2026-05-02T21:00:00'
         )
     """))
     db.execute(text("""
         insert into clinical_medication_requests (
-            id, patient_id, fhir_medication_request_id, status, intent, medication_code, medication_name, authored_on
+            id, patient_id, fhir_medication_request_id, status, intent, medication_code, medication_name, authored_on,
+            source_type, source_system, source_record_id, ingestion_batch_id, transformed_at
         ) values (
-            940001, 900001, null, 'active', 'order', 'RXN-860975', 'Metformin 500 Mg Oral Tablet', '2026-04-01T11:00:00'
+            940001, 900001, null, 'active', 'order', 'RXN-860975', 'Metformin 500 Mg Oral Tablet',
+            '2026-04-01T11:00:00', 'hospital_database', 'internal_hospital_ods', 'MED900001',
+            'test-batch-001', '2026-05-02T21:00:00'
         )
     """))
     db.execute(text("""
         insert into clinical_allergies (
-            id, patient_id, fhir_allergy_id, clinical_status, verification_status, allergy_code, allergy_name, criticality, recorded_date
+            id, patient_id, fhir_allergy_id, clinical_status, verification_status, allergy_code, allergy_name,
+            criticality, recorded_date, source_type, source_system, source_record_id, ingestion_batch_id, transformed_at
         ) values (
-            950001, 900001, null, 'active', 'confirmed', '7980', 'Penicillin', 'high', '2026-04-01T10:00:00'
+            950001, 900001, null, 'active', 'confirmed', '7980', 'Penicillin', 'high', '2026-04-01T10:00:00',
+            'hospital_database', 'internal_hospital_ods', 'ALG900001', 'test-batch-001', '2026-05-02T21:00:00'
         )
     """))
     db.commit()

@@ -17,6 +17,16 @@ function formatDate(value: string | null) {
   return parsed.toLocaleString();
 }
 
+function formatSourceLabel(citation: InsightCitation) {
+  return [
+    citation.source_system,
+    citation.source_record_id ? `record ${citation.source_record_id}` : null,
+    citation.ingestion_batch_id ? `batch ${citation.ingestion_batch_id}` : null,
+  ]
+    .filter(Boolean)
+    .join(" • ");
+}
+
 export default async function PatientDetailPage({
   params,
 }: {
@@ -46,8 +56,13 @@ export default async function PatientDetailPage({
     return (
       <div className="citation-row" aria-label="Source records">
         {citations.map((citation) => (
-          <span key={citation.id} className="citation-chip" title={citation.excerpt}>
-            {citation.resource_type} #{citation.record_id}
+          <span
+            key={citation.id}
+            className="citation-chip"
+            title={[citation.excerpt, formatSourceLabel(citation)].filter(Boolean).join(" | ")}
+          >
+            <span>{citation.resource_type} #{citation.record_id}</span>
+            {formatSourceLabel(citation) ? <span>{formatSourceLabel(citation)}</span> : null}
           </span>
         ))}
       </div>
@@ -65,6 +80,10 @@ export default async function PatientDetailPage({
         <p>
           FHIR ID {patient.fhir_patient_id || "Unavailable"} • {patient.gender || "Gender unknown"} •{" "}
           {patient.birth_date || "Birth date unavailable"}
+        </p>
+        <p>
+          Source {patient.source_system || "Unavailable"} • Record {patient.source_record_id || "Unavailable"} • Batch{" "}
+          {patient.ingestion_batch_id || "Unavailable"}
         </p>
         <div className="pill-row">
           <span className="pill">{patient.conditions.length} conditions</span>

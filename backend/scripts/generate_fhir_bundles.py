@@ -12,6 +12,7 @@ from app.services.clinical_records import get_patient_record, list_patient_recor
 
 
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent.parent / "data" / "generated_fhir_bundles"
+GENERATED_FHIR_SOURCE_MARKER = "clinsight-generated-fhir-bundle"
 
 
 def build_fhir_bundle(patient) -> Dict[str, Any]:
@@ -36,6 +37,16 @@ def build_fhir_bundle(patient) -> Dict[str, Any]:
     return {
         "resourceType": "Bundle",
         "type": "collection",
+        "meta": {
+            "source": GENERATED_FHIR_SOURCE_MARKER,
+            "tag": [
+                {
+                    "system": "https://clinsight.ai/source-type",
+                    "code": "generated-fhir-bundle",
+                    "display": "Generated FHIR bundle",
+                }
+            ],
+        },
         "entry": entries,
     }
 

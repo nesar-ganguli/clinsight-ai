@@ -491,6 +491,8 @@ button.allergy-chip {
 
 .citation-chip {
   display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
   align-items: center;
   max-width: 100%;
   padding: 6px 9px;
@@ -499,7 +501,12 @@ button.allergy-chip {
   background: rgba(15, 118, 110, 0.09);
   color: #0d514c;
   font-size: 0.78rem;
-  white-space: nowrap;
+  white-space: normal;
+}
+
+.citation-chip span:last-child {
+  color: var(--muted);
+  font-size: 0.68rem;
 }
 
 .alert-card.warning {

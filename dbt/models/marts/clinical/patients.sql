@@ -15,9 +15,11 @@ select
     full_name,
     sex as gender,
     birth_date,
+    'hospital_database'::text as source_type,
     source_system,
     source_record_id,
     ingestion_batch_id,
+    current_timestamp as transformed_at,
     ingested_at,
     patient_id as source_patient_id,
     enterprise_patient_id

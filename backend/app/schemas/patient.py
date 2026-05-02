@@ -1,11 +1,20 @@
-from typing import List, Optional
+from datetime import datetime
+from typing import List, Optional, Union
 
 from pydantic import BaseModel, ConfigDict
 
 
-class ConditionOut(BaseModel):
+class SourceMetadataOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
+    source_type: Optional[str] = None
+    source_system: Optional[str] = None
+    source_record_id: Optional[str] = None
+    ingestion_batch_id: Optional[str] = None
+    transformed_at: Optional[Union[str, datetime]] = None
+
+
+class ConditionOut(SourceMetadataOut):
     id: int
     fhir_condition_id: Optional[str]
     condition_code: Optional[str]
@@ -14,9 +23,7 @@ class ConditionOut(BaseModel):
     onset_date: Optional[str]
 
 
-class ObservationOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
+class ObservationOut(SourceMetadataOut):
     id: int
     fhir_observation_id: Optional[str]
     observation_code: Optional[str]
@@ -26,9 +33,7 @@ class ObservationOut(BaseModel):
     effective_date: Optional[str]
 
 
-class EncounterOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
+class EncounterOut(SourceMetadataOut):
     id: int
     fhir_encounter_id: Optional[str]
     status: Optional[str]
@@ -38,9 +43,7 @@ class EncounterOut(BaseModel):
     period_end: Optional[str]
 
 
-class MedicationRequestOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
+class MedicationRequestOut(SourceMetadataOut):
     id: int
     fhir_medication_request_id: Optional[str]
     status: Optional[str]
@@ -50,9 +53,7 @@ class MedicationRequestOut(BaseModel):
     authored_on: Optional[str]
 
 
-class AllergyIntoleranceOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
+class AllergyIntoleranceOut(SourceMetadataOut):
     id: int
     fhir_allergy_id: Optional[str]
     clinical_status: Optional[str]
@@ -63,9 +64,7 @@ class AllergyIntoleranceOut(BaseModel):
     recorded_date: Optional[str]
 
 
-class PatientOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
+class PatientOut(SourceMetadataOut):
     id: int
     fhir_patient_id: Optional[str]
     full_name: Optional[str]
@@ -78,9 +77,7 @@ class PatientOut(BaseModel):
     allergies: List[AllergyIntoleranceOut]
 
 
-class PatientSummaryOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
+class PatientSummaryOut(SourceMetadataOut):
     id: int
     fhir_patient_id: Optional[str]
     full_name: Optional[str]

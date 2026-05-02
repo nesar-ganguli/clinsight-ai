@@ -15,9 +15,11 @@ select
         else 'active'
     end as clinical_status,
     diagnosis_datetime::date as onset_date,
+    'hospital_database'::text as source_type,
     source_system,
     diagnosis_source_id as source_record_id,
     ingestion_batch_id,
+    current_timestamp as transformed_at,
     ingested_at,
     patient_id as source_patient_id,
     encounter_id as source_encounter_id,

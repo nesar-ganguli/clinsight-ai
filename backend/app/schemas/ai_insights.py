@@ -11,6 +11,11 @@ class InsightCitation(BaseModel):
     label: str
     date: Optional[str]
     excerpt: str
+    source_type: Optional[str] = None
+    source_system: Optional[str] = None
+    source_record_id: Optional[str] = None
+    ingestion_batch_id: Optional[str] = None
+    transformed_at: Optional[str] = None
 
 
 class SupportedClaim(BaseModel):

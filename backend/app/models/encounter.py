@@ -18,6 +18,11 @@ class Encounter(Base):
     encounter_type = Column(String(255), nullable=True)
     period_start = Column(String(64), nullable=True)
     period_end = Column(String(64), nullable=True)
+    source_type = Column(String(100), nullable=True, index=True)
+    source_system = Column(String(255), nullable=True)
+    source_record_id = Column(String(255), nullable=True, index=True)
+    ingestion_batch_id = Column(String(255), nullable=True, index=True)
+    transformed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),

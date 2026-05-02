@@ -46,6 +46,7 @@ class InsightBuilder:
             label=label,
             date=self.patient.birth_date,
             excerpt=excerpt,
+            source_record=self.patient,
         )
 
     def cite_condition(self, condition) -> str:
@@ -61,6 +62,7 @@ class InsightBuilder:
                 f"status {condition.clinical_status}" if condition.clinical_status else None,
                 f"onset {condition.onset_date}" if condition.onset_date else None,
             ),
+            source_record=condition,
         )
 
     def cite_observation(self, observation) -> str:
@@ -77,6 +79,7 @@ class InsightBuilder:
                 value,
                 f"effective {observation.effective_date}" if observation.effective_date else None,
             ),
+            source_record=observation,
         )
 
     def cite_encounter(self, encounter) -> str:
@@ -93,6 +96,7 @@ class InsightBuilder:
                 f"start {encounter.period_start}" if encounter.period_start else None,
                 f"end {encounter.period_end}" if encounter.period_end else None,
             ),
+            source_record=encounter,
         )
 
     def cite_medication(self, medication) -> str:
@@ -109,6 +113,7 @@ class InsightBuilder:
                 f"intent {medication.intent}" if medication.intent else None,
                 f"authored {medication.authored_on}" if medication.authored_on else None,
             ),
+            source_record=medication,
         )
 
     def cite_allergy(self, allergy) -> str:
@@ -125,6 +130,7 @@ class InsightBuilder:
                 f"verification {allergy.verification_status}" if allergy.verification_status else None,
                 f"criticality {allergy.criticality}" if allergy.criticality else None,
             ),
+            source_record=allergy,
         )
 
     def _add_citation(
@@ -135,6 +141,7 @@ class InsightBuilder:
         label: str,
         date: Optional[str],
         excerpt: str,
+        source_record: Any,
     ) -> str:
         citation_id = f"{resource_type}:{record_id}"
         if citation_id not in self._citations:
@@ -146,6 +153,7 @@ class InsightBuilder:
                 "label": label,
                 "date": date,
                 "excerpt": excerpt,
+                **_source_metadata(source_record),
             }
         return citation_id
 
@@ -565,6 +573,24 @@ def _format_value(value: Optional[str], unit: Optional[str]) -> Optional[str]:
         return None
     if unit:
         return f"{value} {unit}"
+    return str(value)
+
+
+def _source_metadata(record: Any) -> Dict[str, Optional[str]]:
+    return {
+        "source_type": getattr(record, "source_type", None),
+        "source_system": getattr(record, "source_system", None),
+        "source_record_id": getattr(record, "source_record_id", None),
+        "ingestion_batch_id": getattr(record, "ingestion_batch_id", None),
+        "transformed_at": _string_or_none(getattr(record, "transformed_at", None)),
+    }
+
+
+def _string_or_none(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
     return str(value)
 
 
