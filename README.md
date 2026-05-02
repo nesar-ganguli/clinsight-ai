@@ -176,6 +176,13 @@ dbt run --profiles-dir . --select staging
 dbt test --profiles-dir . --select staging
 ```
 
+Run and test the curated clinical marts:
+
+```bash
+dbt run --profiles-dir . --select marts.clinical
+dbt test --profiles-dir . --select marts.clinical
+```
+
 If your raw hospital tables live outside the `public` schema, pass the raw schema explicitly:
 
 ```bash

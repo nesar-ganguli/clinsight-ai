@@ -21,3 +21,7 @@ models:
     staging:
       +materialized: view
       +schema: staging
+    marts:
+      clinical:
+        +materialized: view
+        +schema: clinical

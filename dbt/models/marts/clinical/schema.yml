@@ -1,0 +1,264 @@
+version: 2
+
+models:
+  - name: patients
+    description: "{{ doc('clinical_mapping') }}"
+    columns:
+      - name: id
+        description: "Stable numeric patient id generated from source MRN; compatible with the app-facing Patient.id concept."
+        tests:
+          - not_null
+          - unique
+      - name: clinical_patient_id
+        description: "Stable text patient id generated from source MRN."
+        tests:
+          - not_null
+          - unique
+      - name: full_name
+        description: "Patient display name."
+      - name: gender
+        description: "Patient administrative gender mapped from staging sex."
+        tests:
+          - accepted_values:
+              arguments:
+                values: ["female", "male", "unknown", "other"]
+      - name: birth_date
+        description: "Patient birth date."
+      - name: source_system
+        description: "Operational source system that supplied the patient row."
+        tests:
+          - not_null
+      - name: source_record_id
+        description: "Original source patient record id."
+        tests:
+          - not_null
+      - name: ingestion_batch_id
+        description: "Raw ingestion batch that produced the row."
+        tests:
+          - not_null
+
+  - name: encounters
+    description: "Curated encounter records shaped like the FastAPI Encounter concept, with source traceability retained."
+    columns:
+      - name: id
+        description: "Stable numeric encounter id."
+        tests:
+          - not_null
+          - unique
+      - name: patient_id
+        description: "Stable numeric patient id for the encounter."
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('patients')
+                field: id
+      - name: status
+        description: "FHIR-like encounter status derived from admission and discharge timestamps."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["finished", "in-progress", "unknown"]
+      - name: encounter_class
+        description: "Encounter class label for operational hospital encounters."
+      - name: source_system
+        description: "Operational source system that supplied the encounter row."
+        tests:
+          - not_null
+      - name: source_record_id
+        description: "Original encounter source record id."
+        tests:
+          - not_null
+      - name: ingestion_batch_id
+        description: "Raw ingestion batch that produced the row."
+        tests:
+          - not_null
+
+  - name: conditions
+    description: "Curated condition records mapped from operational diagnosis rows."
+    columns:
+      - name: id
+        description: "Stable numeric condition id."
+        tests:
+          - not_null
+          - unique
+      - name: patient_id
+        description: "Stable numeric patient id for the condition."
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('patients')
+                field: id
+      - name: condition_code
+        description: "Clinical diagnosis code mapped to the app-facing condition_code field."
+        tests:
+          - not_null
+      - name: condition_name
+        description: "Clinical diagnosis display name mapped to condition_name."
+      - name: clinical_status
+        description: "Normalized condition status."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["active", "resolved"]
+      - name: source_system
+        description: "Operational source system that supplied the diagnosis row."
+        tests:
+          - not_null
+      - name: source_record_id
+        description: "Original diagnosis source record id."
+        tests:
+          - not_null
+      - name: ingestion_batch_id
+        description: "Raw ingestion batch that produced the row."
+        tests:
+          - not_null
+
+  - name: observations
+    description: "Curated observation records mapped from raw labs and vital-like operational rows."
+    columns:
+      - name: id
+        description: "Stable numeric observation id."
+        tests:
+          - not_null
+          - unique
+      - name: patient_id
+        description: "Stable numeric patient id for the observation."
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('patients')
+                field: id
+      - name: observation_code
+        description: "Lab or vital code mapped to observation_code."
+        tests:
+          - not_null
+      - name: observation_name
+        description: "Lab or vital display name mapped to observation_name."
+      - name: value
+        description: "Observation value as text for app compatibility."
+      - name: unit
+        description: "Observation unit."
+      - name: status
+        description: "Normalized observation result status."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["final", "corrected", "preliminary", "amended", "unknown"]
+      - name: source_system
+        description: "Operational source system that supplied the lab row."
+        tests:
+          - not_null
+      - name: source_record_id
+        description: "Original lab source record id."
+        tests:
+          - not_null
+      - name: ingestion_batch_id
+        description: "Raw ingestion batch that produced the row."
+        tests:
+          - not_null
+
+  - name: medication_requests
+    description: "Curated medication request records mapped from operational medication orders."
+    columns:
+      - name: id
+        description: "Stable numeric medication request id."
+        tests:
+          - not_null
+          - unique
+      - name: patient_id
+        description: "Stable numeric patient id for the medication request."
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('patients')
+                field: id
+      - name: status
+        description: "Normalized medication request status."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["active", "completed", "stopped", "cancelled", "on-hold", "entered-in-error", "unknown"]
+      - name: intent
+        description: "Medication request intent; operational medication orders map to order."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["order"]
+      - name: medication_code
+        description: "Medication code mapped from operational order code."
+      - name: medication_name
+        description: "Medication display name."
+      - name: source_system
+        description: "Operational source system that supplied the medication row."
+        tests:
+          - not_null
+      - name: source_record_id
+        description: "Original medication source record id."
+        tests:
+          - not_null
+      - name: ingestion_batch_id
+        description: "Raw ingestion batch that produced the row."
+        tests:
+          - not_null
+
+  - name: allergies
+    description: "Curated allergy records mapped from operational allergy rows."
+    columns:
+      - name: id
+        description: "Stable numeric allergy id."
+        tests:
+          - not_null
+          - unique
+      - name: patient_id
+        description: "Stable numeric patient id for the allergy."
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('patients')
+                field: id
+      - name: clinical_status
+        description: "Normalized allergy clinical status."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["active", "inactive", "resolved"]
+      - name: verification_status
+        description: "Normalized allergy verification status."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["confirmed"]
+      - name: allergy_code
+        description: "Allergen code mapped to app-facing allergy_code."
+      - name: allergy_name
+        description: "Allergen display name mapped to allergy_name."
+      - name: criticality
+        description: "FHIR-like criticality derived from source severity."
+        tests:
+          - accepted_values:
+              arguments:
+                values: ["high", "low", "unable-to-assess"]
+      - name: source_system
+        description: "Operational source system that supplied the allergy row."
+        tests:
+          - not_null
+      - name: source_record_id
+        description: "Original allergy source record id."
+        tests:
+          - not_null
+      - name: ingestion_batch_id
+        description: "Raw ingestion batch that produced the row."
+        tests:
+          - not_null
