@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+from sqlalchemy import text
+
 from app.core.database import SessionLocal
 from app.models.curated_record_source import CuratedRecordSource
 from app.models.ingestion_batch import IngestionBatch
@@ -212,6 +214,47 @@ def test_ai_insights_endpoint_returns_cited_report(client):
     )
 
 
+def test_dbt_curated_patient_surfaces_in_api_quality_and_insights(client):
+    db = SessionLocal()
+    try:
+        create_test_clinical_tables(db)
+        seed_test_clinical_patient(db)
+
+        list_response = client.get("/api/patients", params={"search": "Morgan", "limit": 10, "offset": 0})
+        assert list_response.status_code == 200
+        list_payload = list_response.json()
+        assert list_payload["total"] == 1
+        assert list_payload["items"][0]["id"] == 900001
+        assert list_payload["items"][0]["full_name"] == "Avery Morgan"
+
+        detail_response = client.get("/api/patients/900001")
+        assert detail_response.status_code == 200
+        detail_payload = detail_response.json()
+        assert detail_payload["full_name"] == "Avery Morgan"
+        assert len(detail_payload["conditions"]) == 1
+        assert len(detail_payload["observations"]) == 2
+        assert len(detail_payload["encounters"]) == 1
+        assert len(detail_payload["medication_requests"]) == 1
+        assert len(detail_payload["allergies"]) == 1
+
+        quality_response = client.get("/api/patients/900001/quality-alerts")
+        assert quality_response.status_code == 200
+        quality_payload = quality_response.json()
+        assert quality_payload["patient_id"] == 900001
+        assert quality_payload["alerts"] == []
+
+        insights_response = client.get("/api/patients/900001/ai-insights")
+        assert insights_response.status_code == 200
+        insights_payload = insights_response.json()
+        assert insights_payload["patient_id"] == 900001
+        assert insights_payload["summary_sections"]
+        assert insights_payload["care_gaps"]
+        assert insights_payload["evaluation"]["unsupported_claims"] == 0
+    finally:
+        drop_test_clinical_tables(db)
+        db.close()
+
+
 def test_demo_users_endpoint_returns_interview_roles(client):
     response = client.get("/api/demo-users")
 
@@ -221,3 +264,138 @@ def test_demo_users_endpoint_returns_interview_roles(client):
     assert len(payload["users"]) == 3
     assert {user["id"] for user in payload["users"]} == {"cmio", "nurse", "data_lead"}
     assert all(user["permissions"] for user in payload["users"])
+
+
+def create_test_clinical_tables(db):
+    drop_test_clinical_tables(db)
+    db.execute(text("""
+        create table clinical_patients (
+            id integer primary key,
+            fhir_patient_id text,
+            full_name text,
+            gender text,
+            birth_date text,
+            ingestion_batch_id text,
+            source_patient_id text
+        )
+    """))
+    db.execute(text("""
+        create table clinical_conditions (
+            id integer primary key,
+            patient_id integer,
+            fhir_condition_id text,
+            condition_code text,
+            condition_name text,
+            clinical_status text,
+            onset_date text
+        )
+    """))
+    db.execute(text("""
+        create table clinical_observations (
+            id integer primary key,
+            patient_id integer,
+            fhir_observation_id text,
+            observation_code text,
+            observation_name text,
+            value text,
+            unit text,
+            effective_date text
+        )
+    """))
+    db.execute(text("""
+        create table clinical_encounters (
+            id integer primary key,
+            patient_id integer,
+            fhir_encounter_id text,
+            status text,
+            encounter_class text,
+            encounter_type text,
+            period_start text,
+            period_end text
+        )
+    """))
+    db.execute(text("""
+        create table clinical_medication_requests (
+            id integer primary key,
+            patient_id integer,
+            fhir_medication_request_id text,
+            status text,
+            intent text,
+            medication_code text,
+            medication_name text,
+            authored_on text
+        )
+    """))
+    db.execute(text("""
+        create table clinical_allergies (
+            id integer primary key,
+            patient_id integer,
+            fhir_allergy_id text,
+            clinical_status text,
+            verification_status text,
+            allergy_code text,
+            allergy_name text,
+            criticality text,
+            recorded_date text
+        )
+    """))
+    db.commit()
+
+
+def seed_test_clinical_patient(db):
+    db.execute(text("""
+        insert into clinical_patients (
+            id, fhir_patient_id, full_name, gender, birth_date, ingestion_batch_id, source_patient_id
+        ) values (
+            900001, null, 'Avery Morgan', 'female', '1978-04-12', 'test-batch-001', 'MRN900001'
+        )
+    """))
+    db.execute(text("""
+        insert into clinical_conditions (
+            id, patient_id, fhir_condition_id, condition_code, condition_name, clinical_status, onset_date
+        ) values (
+            910001, 900001, null, 'E11.9', 'Type 2 Diabetes Mellitus Without Complications', 'active', '2026-01-01'
+        )
+    """))
+    db.execute(text("""
+        insert into clinical_observations (
+            id, patient_id, fhir_observation_id, observation_code, observation_name, value, unit, effective_date
+        ) values
+            (920001, 900001, null, '4548-4', 'Hemoglobin A1c', '8.2', '%', '2026-04-01T14:00:00'),
+            (920002, 900001, null, '2345-7', 'Glucose', '140', 'mg/dL', '2026-04-01T14:00:00')
+    """))
+    db.execute(text("""
+        insert into clinical_encounters (
+            id, patient_id, fhir_encounter_id, status, encounter_class, encounter_type, period_start, period_end
+        ) values (
+            930001, 900001, null, 'finished', 'hospital', 'office_visit', '2026-04-01T08:00:00', '2026-04-01T16:00:00'
+        )
+    """))
+    db.execute(text("""
+        insert into clinical_medication_requests (
+            id, patient_id, fhir_medication_request_id, status, intent, medication_code, medication_name, authored_on
+        ) values (
+            940001, 900001, null, 'active', 'order', 'RXN-860975', 'Metformin 500 Mg Oral Tablet', '2026-04-01T11:00:00'
+        )
+    """))
+    db.execute(text("""
+        insert into clinical_allergies (
+            id, patient_id, fhir_allergy_id, clinical_status, verification_status, allergy_code, allergy_name, criticality, recorded_date
+        ) values (
+            950001, 900001, null, 'active', 'confirmed', '7980', 'Penicillin', 'high', '2026-04-01T10:00:00'
+        )
+    """))
+    db.commit()
+
+
+def drop_test_clinical_tables(db):
+    for table_name in [
+        "clinical_allergies",
+        "clinical_medication_requests",
+        "clinical_observations",
+        "clinical_conditions",
+        "clinical_encounters",
+        "clinical_patients",
+    ]:
+        db.execute(text(f"drop table if exists {table_name}"))
+    db.commit()

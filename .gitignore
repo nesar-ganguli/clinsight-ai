@@ -29,3 +29,7 @@ dbt/profiles.yml
 dbt/.user.yml
 dbt/target/
 dbt/logs/
+
+# Generated demo exports
+data/generated_fhir_bundles/
+backend/data/generated_fhir_bundles/

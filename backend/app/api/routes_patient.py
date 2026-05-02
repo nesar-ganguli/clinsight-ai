@@ -1,11 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 from typing import Optional
 
 from app.core.database import get_db
-from app.models.patient import Patient
 from app.schemas.patient import PatientListResponse, PatientOut
+from app.services.clinical_records import get_patient_record, list_patient_records
 
 router = APIRouter()
 
@@ -17,49 +16,12 @@ def list_patients(
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db)
 ):
-    query = db.query(Patient)
-
-    if search:
-        search_term = f"%{search.strip()}%"
-        query = query.filter(
-            or_(
-                Patient.full_name.ilike(search_term),
-                Patient.fhir_patient_id.ilike(search_term)
-            )
-        )
-
-    total = query.count()
-    patients = (
-        query
-        .order_by(Patient.id.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
-
-    return {
-        "items": patients,
-        "total": total,
-        "limit": limit,
-        "offset": offset
-    }
+    return list_patient_records(db, search=search, limit=limit, offset=offset)
 
 
 @router.get("/patients/{patient_id}", response_model=PatientOut)
 def get_patient(patient_id: int, db: Session = Depends(get_db)):
-    patient = (
-        db.query(Patient)
-        .options(
-            joinedload(Patient.conditions),
-            joinedload(Patient.observations),
-            joinedload(Patient.encounters),
-            joinedload(Patient.medication_requests),
-            joinedload(Patient.allergies)
-        )
-        .filter(Patient.id == patient_id)
-        .first()
-    )
-
+    patient = get_patient_record(db, patient_id)
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
 

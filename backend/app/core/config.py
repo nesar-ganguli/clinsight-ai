@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     app_description: str = "Clinical data ingestion, quality analysis, and patient insights API"
     database_url: str = Field(..., alias="DATABASE_URL")
     api_v1_prefix: str = "/api"
+    clinical_schema: str = Field(default="analytics_clinical", alias="CLINICAL_SCHEMA")
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"], alias="CORS_ORIGINS")
 
     @field_validator("cors_origins", mode="before")

@@ -183,6 +183,21 @@ dbt run --profiles-dir . --select marts.clinical
 dbt test --profiles-dir . --select marts.clinical
 ```
 
+Generate uploadable FHIR Bundle JSON files from curated clinical records:
+
+```bash
+cd ../backend
+source .venv/bin/activate
+export DATABASE_URL=postgresql+psycopg2://clinsight:clinsight@localhost:5432/clinsight
+python scripts/generate_fhir_bundles.py --limit 50 --output data/generated_fhir_bundles
+```
+
+Filter the export to a specific ingestion batch:
+
+```bash
+python scripts/generate_fhir_bundles.py --limit 50 --output data/generated_fhir_bundles --ingestion-batch-id synthetic-42-1000
+```
+
 If your raw hospital tables live outside the `public` schema, pass the raw schema explicitly:
 
 ```bash
