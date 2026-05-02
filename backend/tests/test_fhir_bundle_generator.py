@@ -61,6 +61,7 @@ def test_write_fhir_bundles_creates_uploadable_json(client, tmp_path):
     response = client.post(
         "/api/upload",
         files={"file": (paths[0].name, json.dumps(bundle), "application/json")},
+        headers=auth_headers(client),
     )
 
     assert response.status_code == 200
@@ -81,6 +82,15 @@ def test_write_fhir_bundles_creates_uploadable_json(client, tmp_path):
         assert source_system.system_type == "generated_fhir_bundle"
     finally:
         db.close()
+
+
+def auth_headers(client):
+    response = client.post(
+        "/api/auth/login",
+        json={"username": "admin", "password": "clinsight-demo"},
+    )
+    assert response.status_code == 200
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 
 def synthetic_patient():

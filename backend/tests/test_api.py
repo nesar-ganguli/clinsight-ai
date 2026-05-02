@@ -4,6 +4,7 @@ from pathlib import Path
 from sqlalchemy import text
 
 from app.core.database import SessionLocal
+from app.models.audit_log import AuditLog
 from app.models.curated_record_source import CuratedRecordSource
 from app.models.ingestion_batch import IngestionBatch
 from app.models.patient import Patient
@@ -27,12 +28,22 @@ def update_patient_reference(bundle, patient_id):
             resource["patient"]["reference"] = f"Patient/{patient_id}"
 
 
+def auth_headers(client, username="admin"):
+    response = client.post(
+        "/api/auth/login",
+        json={"username": username, "password": "clinsight-demo"},
+    )
+    assert response.status_code == 200
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
 def test_upload_bundle_creates_patient_record(client):
     bundle = load_sample_bundle()
 
     response = client.post(
         "/api/upload",
-        files={"file": ("patient_bundle_1.json", json.dumps(bundle), "application/json")}
+        files={"file": ("patient_bundle_1.json", json.dumps(bundle), "application/json")},
+        headers=auth_headers(client),
     )
 
     assert response.status_code == 200
@@ -48,7 +59,7 @@ def test_upload_bundle_creates_patient_record(client):
         "AllergyIntolerance": 1
     }
 
-    patient_response = client.get(f"/api/patients/{payload['patient_id']}")
+    patient_response = client.get(f"/api/patients/{payload['patient_id']}", headers=auth_headers(client, "clinician"))
     assert patient_response.status_code == 200
 
     patient_payload = patient_response.json()
@@ -65,7 +76,8 @@ def test_upload_bundle_is_idempotent_for_same_fhir_patient(client):
 
     first_response = client.post(
         "/api/upload",
-        files={"file": ("patient_bundle_1.json", json.dumps(bundle), "application/json")}
+        files={"file": ("patient_bundle_1.json", json.dumps(bundle), "application/json")},
+        headers=auth_headers(client),
     )
     assert first_response.status_code == 200
     first_payload = first_response.json()
@@ -75,7 +87,8 @@ def test_upload_bundle_is_idempotent_for_same_fhir_patient(client):
 
     second_response = client.post(
         "/api/upload",
-        files={"file": ("patient_bundle_1.json", json.dumps(bundle), "application/json")}
+        files={"file": ("patient_bundle_1.json", json.dumps(bundle), "application/json")},
+        headers=auth_headers(client),
     )
     assert second_response.status_code == 200
     second_payload = second_response.json()
@@ -83,7 +96,7 @@ def test_upload_bundle_is_idempotent_for_same_fhir_patient(client):
     assert second_payload["patient_id"] == first_payload["patient_id"]
     assert second_payload["import_mode"] == "updated"
 
-    patient_response = client.get(f"/api/patients/{first_payload['patient_id']}")
+    patient_response = client.get(f"/api/patients/{first_payload['patient_id']}", headers=auth_headers(client, "clinician"))
     patient_payload = patient_response.json()
 
     assert patient_payload["full_name"] == "Jane Doe"
@@ -99,7 +112,8 @@ def test_upload_bundle_records_multisource_ingestion_metadata(client):
 
     response = client.post(
         "/api/upload",
-        files={"file": ("patient_bundle_1.json", json.dumps(bundle), "application/json")}
+        files={"file": ("patient_bundle_1.json", json.dumps(bundle), "application/json")},
+        headers=auth_headers(client),
     )
     assert response.status_code == 200
     payload = response.json()
@@ -155,14 +169,20 @@ def test_list_patients_supports_search(client):
 
     client.post(
         "/api/upload",
-        files={"file": ("patient_bundle_1.json", json.dumps(first_bundle), "application/json")}
+        files={"file": ("patient_bundle_1.json", json.dumps(first_bundle), "application/json")},
+        headers=auth_headers(client),
     )
     client.post(
         "/api/upload",
-        files={"file": ("patient_bundle_2.json", json.dumps(second_bundle), "application/json")}
+        files={"file": ("patient_bundle_2.json", json.dumps(second_bundle), "application/json")},
+        headers=auth_headers(client),
     )
 
-    response = client.get("/api/patients", params={"search": "Alice", "limit": 10, "offset": 0})
+    response = client.get(
+        "/api/patients",
+        params={"search": "Alice", "limit": 10, "offset": 0},
+        headers=auth_headers(client, "clinician"),
+    )
 
     assert response.status_code == 200
     payload = response.json()
@@ -179,11 +199,12 @@ def test_quality_alerts_surface_structured_rules(client):
 
     upload_response = client.post(
         "/api/upload",
-        files={"file": ("patient_bundle_1.json", json.dumps(bundle), "application/json")}
+        files={"file": ("patient_bundle_1.json", json.dumps(bundle), "application/json")},
+        headers=auth_headers(client),
     )
     patient_id = upload_response.json()["patient_id"]
 
-    response = client.get(f"/api/patients/{patient_id}/quality-alerts")
+    response = client.get(f"/api/patients/{patient_id}/quality-alerts", headers=auth_headers(client, "reviewer"))
 
     assert response.status_code == 200
     payload = response.json()
@@ -198,11 +219,12 @@ def test_ai_insights_endpoint_returns_cited_report(client):
 
     upload_response = client.post(
         "/api/upload",
-        files={"file": ("patient_bundle_1.json", json.dumps(bundle), "application/json")}
+        files={"file": ("patient_bundle_1.json", json.dumps(bundle), "application/json")},
+        headers=auth_headers(client),
     )
     patient_id = upload_response.json()["patient_id"]
 
-    response = client.get(f"/api/patients/{patient_id}/ai-insights")
+    response = client.get(f"/api/patients/{patient_id}/ai-insights", headers=auth_headers(client, "clinician"))
 
     assert response.status_code == 200
     payload = response.json()
@@ -230,14 +252,18 @@ def test_dbt_curated_patient_surfaces_in_api_quality_and_insights(client):
         create_test_clinical_tables(db)
         seed_test_clinical_patient(db)
 
-        list_response = client.get("/api/patients", params={"search": "Morgan", "limit": 10, "offset": 0})
+        list_response = client.get(
+            "/api/patients",
+            params={"search": "Morgan", "limit": 10, "offset": 0},
+            headers=auth_headers(client, "clinician"),
+        )
         assert list_response.status_code == 200
         list_payload = list_response.json()
         assert list_payload["total"] == 1
         assert list_payload["items"][0]["id"] == 900001
         assert list_payload["items"][0]["full_name"] == "Avery Morgan"
 
-        detail_response = client.get("/api/patients/900001")
+        detail_response = client.get("/api/patients/900001", headers=auth_headers(client, "clinician"))
         assert detail_response.status_code == 200
         detail_payload = detail_response.json()
         assert detail_payload["full_name"] == "Avery Morgan"
@@ -247,13 +273,13 @@ def test_dbt_curated_patient_surfaces_in_api_quality_and_insights(client):
         assert len(detail_payload["medication_requests"]) == 1
         assert len(detail_payload["allergies"]) == 1
 
-        quality_response = client.get("/api/patients/900001/quality-alerts")
+        quality_response = client.get("/api/patients/900001/quality-alerts", headers=auth_headers(client, "reviewer"))
         assert quality_response.status_code == 200
         quality_payload = quality_response.json()
         assert quality_payload["patient_id"] == 900001
         assert quality_payload["alerts"] == []
 
-        insights_response = client.get("/api/patients/900001/ai-insights")
+        insights_response = client.get("/api/patients/900001/ai-insights", headers=auth_headers(client, "clinician"))
         assert insights_response.status_code == 200
         insights_payload = insights_response.json()
         assert insights_payload["patient_id"] == 900001
@@ -268,7 +294,7 @@ def test_dbt_curated_patient_surfaces_in_api_quality_and_insights(client):
 
 
 def test_demo_users_endpoint_returns_interview_roles(client):
-    response = client.get("/api/demo-users")
+    response = client.get("/api/demo-users", headers=auth_headers(client))
 
     assert response.status_code == 200
     payload = response.json()
@@ -276,6 +302,38 @@ def test_demo_users_endpoint_returns_interview_roles(client):
     assert len(payload["users"]) == 3
     assert {user["id"] for user in payload["users"]} == {"cmio", "nurse", "data_lead"}
     assert all(user["permissions"] for user in payload["users"])
+
+
+def test_protected_endpoints_require_authentication(client):
+    response = client.get("/api/patients")
+    assert response.status_code == 401
+
+
+def test_role_permissions_and_patient_access_audit(client):
+    bundle = load_sample_bundle()
+
+    upload_response = client.post(
+        "/api/upload",
+        files={"file": ("patient_bundle_1.json", json.dumps(bundle), "application/json")},
+        headers=auth_headers(client),
+    )
+    patient_id = upload_response.json()["patient_id"]
+
+    clinician_headers = auth_headers(client, "clinician")
+    denied_quality = client.get(f"/api/patients/{patient_id}/quality-alerts", headers=clinician_headers)
+    assert denied_quality.status_code == 403
+
+    detail_response = client.get(f"/api/patients/{patient_id}", headers=clinician_headers)
+    assert detail_response.status_code == 200
+
+    db = SessionLocal()
+    try:
+        audit_log = db.query(AuditLog).filter(AuditLog.patient_id == patient_id).one()
+        assert audit_log.username == "clinician"
+        assert audit_log.role == "clinician"
+        assert audit_log.action == "patient_chart_access"
+    finally:
+        db.close()
 
 
 def create_test_clinical_tables(db):

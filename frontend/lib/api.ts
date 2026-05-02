@@ -1,5 +1,7 @@
 import {
+  AuthUser,
   DemoUsersResponse,
+  LoginResponse,
   Patient,
   PatientAiInsightsResponse,
   PatientListResponse,
@@ -12,9 +14,27 @@ const API_BASE_URL =
     ? process.env.INTERNAL_API_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000"
     : process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+type RequestOptions = RequestInit & {
+  token?: string | null;
+};
+
+function getBrowserToken() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  return window.localStorage.getItem("clinsight_token");
+}
+
+async function request<T>(path: string, init?: RequestOptions): Promise<T> {
+  const token = init?.token ?? getBrowserToken();
+  const headers = new Headers(init?.headers);
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
+    headers,
     cache: "no-store",
   });
 
@@ -32,26 +52,38 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export function listPatients(search?: string) {
+export function login(username: string, password: string) {
+  return request<LoginResponse>("/api/auth/login", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({username, password}),
+  });
+}
+
+export function getCurrentUser(token?: string | null) {
+  return request<AuthUser>("/api/auth/me", {token});
+}
+
+export function listPatients(search?: string, token?: string | null) {
   const params = new URLSearchParams();
   if (search) {
     params.set("search", search);
   }
   params.set("limit", "20");
   params.set("offset", "0");
-  return request<PatientListResponse>(`/api/patients?${params.toString()}`);
+  return request<PatientListResponse>(`/api/patients?${params.toString()}`, {token});
 }
 
-export function getPatient(patientId: number | string) {
-  return request<Patient>(`/api/patients/${patientId}`);
+export function getPatient(patientId: number | string, token?: string | null) {
+  return request<Patient>(`/api/patients/${patientId}`, {token});
 }
 
-export function getQualityAlerts(patientId: number | string) {
-  return request<QualityAlertsResponse>(`/api/patients/${patientId}/quality-alerts`);
+export function getQualityAlerts(patientId: number | string, token?: string | null) {
+  return request<QualityAlertsResponse>(`/api/patients/${patientId}/quality-alerts`, {token});
 }
 
-export function getPatientAiInsights(patientId: number | string) {
-  return request<PatientAiInsightsResponse>(`/api/patients/${patientId}/ai-insights`);
+export function getPatientAiInsights(patientId: number | string, token?: string | null) {
+  return request<PatientAiInsightsResponse>(`/api/patients/${patientId}/ai-insights`, {token});
 }
 
 export function getDemoUsers() {

@@ -12,6 +12,7 @@ os.environ.setdefault("DATABASE_URL", f"sqlite:///{TEST_DB_PATH}")
 from app.core.database import Base, SessionLocal, engine
 from app.main import app
 from app.models.allergy_intolerance import AllergyIntolerance
+from app.models.audit_log import AuditLog
 from app.models.condition import Condition
 from app.models.curated_record_source import CuratedRecordSource
 from app.models.encounter import Encounter
@@ -40,6 +41,7 @@ from app.models.raw_operational import (
 )
 from app.models.source_system import SourceSystem
 from app.models.staging import StagingClinicalResource, StagingPatientIdentity
+from app.models.user import User
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -56,6 +58,7 @@ def clear_database():
     db = SessionLocal()
     try:
         db.query(CuratedRecordSource).delete()
+        db.query(AuditLog).delete()
         db.query(StagingClinicalResource).delete()
         db.query(StagingPatientIdentity).delete()
         db.query(RawHospitalAllergy).delete()
@@ -81,6 +84,7 @@ def clear_database():
         db.query(Patient).delete()
         db.query(IngestionBatch).delete()
         db.query(SourceSystem).delete()
+        db.query(User).delete()
         db.commit()
         yield
     finally:

@@ -1,8 +1,11 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 
-import { getPatient, getPatientAiInsights, getQualityAlerts } from "@/lib/api";
+import { getCurrentUser, getPatient, getPatientAiInsights, getQualityAlerts } from "@/lib/api";
+import { canViewCareGaps, canViewInsights, canViewQuality, canViewSourceMetadata, TOKEN_STORAGE_KEY } from "@/lib/auth";
 import { buildTimeline } from "@/lib/timeline";
-import { InsightCitation } from "@/lib/types";
+import { InsightCitation, PatientAiInsightsResponse, QualityAlertsResponse } from "@/lib/types";
 
 function formatDate(value: string | null) {
   if (!value) {
@@ -33,10 +36,36 @@ export default async function PatientDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const token = (await cookies()).get(TOKEN_STORAGE_KEY)?.value;
+  if (!token) {
+    redirect("/login");
+  }
+
+  const user = await getCurrentUser(token);
   const [patient, quality, insights] = await Promise.all([
-    getPatient(id),
-    getQualityAlerts(id),
-    getPatientAiInsights(id),
+    getPatient(id, token),
+    canViewQuality(user.role)
+      ? getQualityAlerts(id, token)
+      : Promise.resolve<QualityAlertsResponse>({patient_id: Number(id), alerts: []}),
+    canViewInsights(user.role) || canViewCareGaps(user.role)
+      ? getPatientAiInsights(id, token)
+      : Promise.resolve<PatientAiInsightsResponse>({
+          patient_id: Number(id),
+          generated_by: "ClinSight grounded insight rules v1",
+          disclaimer: "AI-assisted chart review. Verify all findings against the source record before clinical use.",
+          summary_sections: [],
+          inconsistencies: [],
+          care_gaps: [],
+          citations: [],
+          evaluation: {
+            grounded_claims: 0,
+            unsupported_claims: 0,
+            unresolved_citations: 0,
+            source_coverage: 0,
+            hallucination_risk: "low",
+            checks: [],
+          },
+        }),
   ]);
 
   const timeline = buildTimeline(patient);
@@ -55,16 +84,19 @@ export default async function PatientDetailPage({
 
     return (
       <div className="citation-row" aria-label="Source records">
-        {citations.map((citation) => (
-          <span
-            key={citation.id}
-            className="citation-chip"
-            title={[citation.excerpt, formatSourceLabel(citation)].filter(Boolean).join(" | ")}
-          >
-            <span>{citation.resource_type} #{citation.record_id}</span>
-            {formatSourceLabel(citation) ? <span>{formatSourceLabel(citation)}</span> : null}
-          </span>
-        ))}
+        {citations.map((citation) => {
+          const sourceLabel = canViewSourceMetadata(user.role) ? formatSourceLabel(citation) : "";
+          return (
+            <span
+              key={citation.id}
+              className="citation-chip"
+              title={[citation.excerpt, sourceLabel].filter(Boolean).join(" | ")}
+            >
+              <span>{citation.resource_type} #{citation.record_id}</span>
+              {sourceLabel ? <span>{sourceLabel}</span> : null}
+            </span>
+          );
+        })}
       </div>
     );
   }
@@ -81,11 +113,14 @@ export default async function PatientDetailPage({
           FHIR ID {patient.fhir_patient_id || "Unavailable"} • {patient.gender || "Gender unknown"} •{" "}
           {patient.birth_date || "Birth date unavailable"}
         </p>
-        <p>
-          Source {patient.source_system || "Unavailable"} • Record {patient.source_record_id || "Unavailable"} • Batch{" "}
-          {patient.ingestion_batch_id || "Unavailable"}
-        </p>
+        {canViewSourceMetadata(user.role) ? (
+          <p>
+            Source {patient.source_system || "Unavailable"} • Record {patient.source_record_id || "Unavailable"} • Batch{" "}
+            {patient.ingestion_batch_id || "Unavailable"}
+          </p>
+        ) : null}
         <div className="pill-row">
+          <span className="pill">{user.role.replaceAll("_", " ")}</span>
           <span className="pill">{patient.conditions.length} conditions</span>
           <span className="pill">{patient.observations.length} observations</span>
           <span className="pill">{patient.encounters.length} encounters</span>
@@ -134,6 +169,9 @@ export default async function PatientDetailPage({
               </div>
             </div>
             <div className="panel-body insight-stack">
+              {!canViewInsights(user.role) ? (
+                <div className="empty-state">Your role does not include grounded AI summary access.</div>
+              ) : null}
               {insights.summary_sections.map((section) => (
                 <section key={section.title} className="insight-section">
                   <h3>{section.title}</h3>
@@ -188,7 +226,10 @@ export default async function PatientDetailPage({
             </div>
             <div className="panel-body">
               <div className="list">
-                {insights.care_gaps.map((gap) => (
+                {!canViewCareGaps(user.role) ? (
+                  <div className="empty-state">Care gap suggestions are available to care coordinators and admins.</div>
+                ) : null}
+                {canViewCareGaps(user.role) ? insights.care_gaps.map((gap) => (
                   <article key={gap.code} className={`care-gap-card priority-${gap.priority}`}>
                     <div className="alert-header">
                       <strong>{gap.title}</strong>
@@ -198,11 +239,12 @@ export default async function PatientDetailPage({
                     <div className="meta-line">{gap.rationale}</div>
                     {renderCitations(gap.citation_ids)}
                   </article>
-                ))}
+                )) : null}
               </div>
             </div>
           </section>
 
+          {canViewInsights(user.role) ? (
           <section className="panel">
             <div className="panel-header">
               <div>
@@ -225,7 +267,9 @@ export default async function PatientDetailPage({
               </div>
             </div>
           </section>
+          ) : null}
 
+          {canViewInsights(user.role) ? (
           <section className="panel">
             <div className="panel-header">
               <div>
@@ -261,7 +305,9 @@ export default async function PatientDetailPage({
               </div>
             </div>
           </section>
+          ) : null}
 
+          {canViewQuality(user.role) ? (
           <section className="panel">
             <div className="panel-header">
               <div>
@@ -288,6 +334,7 @@ export default async function PatientDetailPage({
               </div>
             </div>
           </section>
+          ) : null}
 
           <section className="panel">
             <div className="panel-header">

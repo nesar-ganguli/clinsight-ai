@@ -168,3 +168,19 @@ export type DemoUser = {
 export type DemoUsersResponse = {
   users: DemoUser[];
 };
+
+export type UserRole = "admin" | "clinician" | "care_coordinator" | "data_reviewer";
+
+export type AuthUser = {
+  id: number;
+  username: string;
+  full_name: string | null;
+  role: UserRole;
+  permissions: string[];
+};
+
+export type LoginResponse = {
+  access_token: string;
+  token_type: "bearer";
+  user: AuthUser;
+};

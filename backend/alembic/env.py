@@ -6,6 +6,7 @@ from sqlalchemy import engine_from_config, pool
 from app.core.config import settings
 from app.core.database import Base
 from app.models.allergy_intolerance import AllergyIntolerance
+from app.models.audit_log import AuditLog
 from app.models.condition import Condition
 from app.models.curated_record_source import CuratedRecordSource
 from app.models.encounter import Encounter
@@ -34,6 +35,7 @@ from app.models.raw_operational import (
 )
 from app.models.source_system import SourceSystem
 from app.models.staging import StagingClinicalResource, StagingPatientIdentity
+from app.models.user import User
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)

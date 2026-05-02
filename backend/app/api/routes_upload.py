@@ -4,13 +4,19 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.models.user import User
+from app.services.auth import require_roles
 from app.services.ingestion import ingest_fhir_bundle
 
 router = APIRouter()
 
 
 @router.post("/upload")
-async def upload_fhir_bundle(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_fhir_bundle(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles("admin", "data_reviewer")),
+):
     if not file.filename.endswith(".json"):
         raise HTTPException(status_code=400, detail="Only JSON files are supported")
 

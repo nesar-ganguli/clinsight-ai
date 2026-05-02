@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes_ai_insights import router as ai_insights_router
+from app.api.routes_auth import router as auth_router
 from app.api.routes_demo import router as demo_router
 from app.api.routes_upload import router as upload_router
 from app.api.routes_patient import router as patient_router
@@ -13,6 +14,7 @@ from app.models.observation import Observation
 from app.models.encounter import Encounter
 from app.models.medication_request import MedicationRequest
 from app.models.allergy_intolerance import AllergyIntolerance
+from app.models.audit_log import AuditLog
 from app.models.curated_record_source import CuratedRecordSource
 from app.models.ingestion_batch import IngestionBatch
 from app.models.patient_source_identifier import PatientSourceIdentifier
@@ -36,6 +38,7 @@ from app.models.raw_operational import (
 )
 from app.models.source_system import SourceSystem
 from app.models.staging import StagingClinicalResource, StagingPatientIdentity
+from app.models.user import User
 
 app = FastAPI(
     title=settings.app_name,
@@ -51,6 +54,7 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
+app.include_router(auth_router, prefix=settings.api_v1_prefix, tags=["Auth"])
 app.include_router(upload_router, prefix=settings.api_v1_prefix, tags=["Upload"])
 app.include_router(patient_router, prefix=settings.api_v1_prefix, tags=["Patients"])
 app.include_router(quality_router, prefix=settings.api_v1_prefix, tags=["Quality"])

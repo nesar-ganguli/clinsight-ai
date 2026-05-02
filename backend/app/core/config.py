@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     database_url: str = Field(..., alias="DATABASE_URL")
     api_v1_prefix: str = "/api"
     clinical_schema: str = Field(default="analytics_clinical", alias="CLINICAL_SCHEMA")
+    auth_secret_key: str = Field(default="clinsight-demo-secret-change-me", alias="AUTH_SECRET_KEY")
+    auth_token_expire_minutes: int = Field(default=480, alias="AUTH_TOKEN_EXPIRE_MINUTES")
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"], alias="CORS_ORIGINS")
 
     @field_validator("cors_origins", mode="before")
