@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">ClinSight AI dashboard product screen</title>
+  <desc id="desc">A stylized screenshot of the ClinSight AI workspace with upload, patient directory, and demo role panels.</desc>
+  <rect width="1200" height="760" fill="#f4efe4"/>
+  <rect x="64" y="48" width="1072" height="178" rx="24" fill="#164f47"/>
+  <text x="96" y="96" fill="#d7f3ed" font-family="Arial" font-size="18" font-weight="700">ClinSight AI Workspace</text>
+  <text x="96" y="145" fill="#fffaf1" font-family="Arial" font-size="42" font-weight="700">Clinical chart review with data quality signals built in.</text>
+  <text x="96" y="187" fill="#dfeeea" font-family="Arial" font-size="22">Import FHIR bundles, search patients, and move into grounded longitudinal review.</text>
+  <rect x="64" y="258" width="500" height="420" rx="18" fill="#fffaf1" stroke="#d9d0c2"/>
+  <text x="96" y="310" fill="#14211b" font-family="Arial" font-size="28" font-weight="700">Import FHIR Bundle</text>
+  <rect x="96" y="350" width="420" height="56" rx="12" fill="#ffffff" stroke="#d9d0c2"/>
+  <text x="118" y="385" fill="#5e685f" font-family="Arial" font-size="18">patient_bundle_1.json</text>
+  <rect x="96" y="430" width="170" height="48" rx="24" fill="#0f766e"/>
+  <text x="129" y="462" fill="#ffffff" font-family="Arial" font-size="18" font-weight="700">Upload Bundle</text>
+  <rect x="96" y="520" width="420" height="96" rx="16" fill="#d7f3ed" stroke="#a8d8cf"/>
+  <text x="124" y="558" fill="#0d514c" font-family="Arial" font-size="20" font-weight="700">Patient created.</text>
+  <text x="124" y="590" fill="#0d514c" font-family="Arial" font-size="18">Resources parsed and ready for review.</text>
+  <rect x="600" y="258" width="536" height="228" rx="18" fill="#fffaf1" stroke="#d9d0c2"/>
+  <text x="632" y="310" fill="#14211b" font-family="Arial" font-size="28" font-weight="700">Patient Directory</text>
+  <rect x="632" y="346" width="440" height="58" rx="14" fill="#ffffff" stroke="#d9d0c2"/>
+  <text x="654" y="382" fill="#5e685f" font-family="Arial" font-size="18">Search by patient name or FHIR ID</text>
+  <rect x="632" y="428" width="440" height="34" rx="17" fill="#d7f3ed"/>
+  <text x="652" y="451" fill="#0d514c" font-family="Arial" font-size="17">John Doe • patient-001 • male • 1968-04-10</text>
+  <rect x="600" y="514" width="536" height="164" rx="18" fill="#fffaf1" stroke="#d9d0c2"/>
+  <text x="632" y="558" fill="#5e685f" font-family="Arial" font-size="16" font-weight="700">DEMO ROLES</text>
+  <text x="632" y="592" fill="#14211b" font-family="Arial" font-size="28" font-weight="700">Interview personas</text>
+  <text x="632" y="632" fill="#5e685f" font-family="Arial" font-size="18">CMIO reviewer • Care coordinator • Clinical data lead</text>
+</svg>

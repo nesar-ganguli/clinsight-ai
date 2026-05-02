@@ -1,24 +1,38 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.api.routes_ai_insights import router as ai_insights_router
+from app.api.routes_demo import router as demo_router
 from app.api.routes_upload import router as upload_router
 from app.api.routes_patient import router as patient_router
 from app.api.routes_quality import router as quality_router
-from app.core.database import Base, engine
+from app.core.config import settings
 
 from app.models.patient import Patient
 from app.models.condition import Condition
 from app.models.observation import Observation
-
-Base.metadata.create_all(bind=engine)
+from app.models.encounter import Encounter
+from app.models.medication_request import MedicationRequest
+from app.models.allergy_intolerance import AllergyIntolerance
 
 app = FastAPI(
-    title="ClinSight AI Backend",
-    description="AI Clinical Data Interpreter backend",
-    version="0.1.0"
+    title=settings.app_name,
+    description=settings.app_description,
+    version=settings.app_version
 )
 
-app.include_router(upload_router, prefix="/api", tags=["Upload"])
-app.include_router(patient_router, prefix="/api", tags=["Patients"])
-app.include_router(quality_router, prefix="/api", tags=["Quality"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
+
+app.include_router(upload_router, prefix=settings.api_v1_prefix, tags=["Upload"])
+app.include_router(patient_router, prefix=settings.api_v1_prefix, tags=["Patients"])
+app.include_router(quality_router, prefix=settings.api_v1_prefix, tags=["Quality"])
+app.include_router(ai_insights_router, prefix=settings.api_v1_prefix, tags=["AI Insights"])
+app.include_router(demo_router, prefix=settings.api_v1_prefix, tags=["Demo"])
 
 
 @app.get("/")

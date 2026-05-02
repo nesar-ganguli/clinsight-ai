@@ -1,0 +1,211 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "patient-003",
+        "name": [
+          {
+            "given": ["Priya"],
+            "family": "Nair"
+          }
+        ],
+        "gender": "female",
+        "birthDate": "1959-02-03"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "condition-201",
+        "subject": {
+          "reference": "Patient/patient-003"
+        },
+        "clinicalStatus": {
+          "coding": [
+            {
+              "code": "active",
+              "display": "Active"
+            }
+          ]
+        },
+        "code": {
+          "coding": [
+            {
+              "code": "38341003",
+              "display": "Hypertension"
+            }
+          ]
+        },
+        "onsetDateTime": "2022-01-10"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "condition-202",
+        "subject": {
+          "reference": "Patient/patient-003"
+        },
+        "clinicalStatus": {
+          "coding": [
+            {
+              "code": "resolved",
+              "display": "Resolved"
+            }
+          ]
+        },
+        "code": {
+          "coding": [
+            {
+              "code": "38341003",
+              "display": "Hypertension"
+            }
+          ]
+        },
+        "onsetDateTime": "2022-01-10"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "observation-201",
+        "subject": {
+          "reference": "Patient/patient-003"
+        },
+        "code": {
+          "coding": [
+            {
+              "code": "85354-9",
+              "display": "Blood pressure panel"
+            }
+          ]
+        },
+        "valueString": "118/72",
+        "effectiveDateTime": "2026-02-12T09:00:00Z"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "observation-202",
+        "subject": {
+          "reference": "Patient/patient-003"
+        },
+        "code": {
+          "coding": [
+            {
+              "code": "85354-9",
+              "display": "Blood pressure panel"
+            }
+          ]
+        },
+        "valueString": "168/104",
+        "effectiveDateTime": "2026-02-12T09:00:00Z"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Encounter",
+        "id": "encounter-201",
+        "subject": {
+          "reference": "Patient/patient-003"
+        },
+        "status": "finished",
+        "class": {
+          "code": "AMB",
+          "display": "ambulatory"
+        },
+        "type": {
+          "coding": [
+            {
+              "code": "185349003",
+              "display": "Outpatient follow-up visit"
+            }
+          ]
+        },
+        "period": {
+          "start": "2026-02-12T10:30:00Z",
+          "end": "2026-02-12T09:45:00Z"
+        }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "id": "medicationrequest-201",
+        "subject": {
+          "reference": "Patient/patient-003"
+        },
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": {
+          "coding": [
+            {
+              "code": "197361",
+              "display": "Amlodipine 5 MG Oral Tablet"
+            }
+          ]
+        },
+        "authoredOn": "2026-02-12"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "id": "medicationrequest-202",
+        "subject": {
+          "reference": "Patient/patient-003"
+        },
+        "status": "stopped",
+        "intent": "order",
+        "medicationCodeableConcept": {
+          "coding": [
+            {
+              "code": "197361",
+              "display": "Amlodipine 5 MG Oral Tablet"
+            }
+          ]
+        },
+        "authoredOn": "2026-02-10"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "AllergyIntolerance",
+        "id": "allergy-201",
+        "patient": {
+          "reference": "Patient/patient-003"
+        },
+        "clinicalStatus": {
+          "coding": [
+            {
+              "code": "active",
+              "display": "Active"
+            }
+          ]
+        },
+        "verificationStatus": {
+          "coding": [
+            {
+              "code": "confirmed",
+              "display": "Confirmed"
+            }
+          ]
+        },
+        "code": {
+          "coding": [
+            {
+              "code": "293586001",
+              "display": "Allergy to aspirin"
+            }
+          ]
+        },
+        "criticality": "low",
+        "recordedDate": "2023-07-09"
+      }
+    }
+  ]
+}

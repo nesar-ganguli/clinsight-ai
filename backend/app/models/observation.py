@@ -1,18 +1,28 @@
-from sqlalchemy import Column, ForeignKey, Integer, String
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import relationship
 from app.core.database import Base
 
 
 class Observation(Base):
     __tablename__ = "observations"
+    __table_args__ = (
+        UniqueConstraint("patient_id", "fhir_observation_id", name="uq_observations_patient_fhir_observation_id"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
-    fhir_observation_id = Column(String, nullable=True)
-    observation_code = Column(String, nullable=True)
-    observation_name = Column(String, nullable=True)
-    value = Column(String, nullable=True)
-    unit = Column(String, nullable=True)
-    effective_date = Column(String, nullable=True)
+    patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False, index=True)
+    fhir_observation_id = Column(String(255), nullable=True)
+    observation_code = Column(String(100), nullable=True, index=True)
+    observation_name = Column(String(255), nullable=True)
+    value = Column(String(255), nullable=True)
+    unit = Column(String(64), nullable=True)
+    effective_date = Column(String(64), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now()
+    )
 
     patient = relationship("Patient", back_populates="observations")

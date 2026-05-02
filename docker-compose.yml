@@ -1,0 +1,70 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: clinsight
+      POSTGRES_USER: clinsight
+      POSTGRES_PASSWORD: clinsight
+    ports:
+      - "5432:5432"
+    volumes:
+      - clinsight_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clinsight -d clinsight"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg2://clinsight:clinsight@db:5432/clinsight
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      INTERNAL_API_BASE_URL: http://backend:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+  seed:
+    build:
+      context: ./backend
+    profiles:
+      - tools
+    environment:
+      DATABASE_URL: postgresql+psycopg2://clinsight:clinsight@db:5432/clinsight
+      RESET_DEMO_DATA: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: sh -c "alembic upgrade head && python scripts/seed_demo_data.py"
+
+  metrics:
+    build:
+      context: ./backend
+    profiles:
+      - tools
+    environment:
+      DATABASE_URL: postgresql+psycopg2://clinsight:clinsight@db:5432/clinsight
+    depends_on:
+      db:
+        condition: service_healthy
+    command: sh -c "alembic upgrade head && python scripts/measure_demo_metrics.py"
+
+volumes:
+  clinsight_postgres:

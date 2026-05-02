@@ -126,9 +126,63 @@ def parse_observation(resource: Dict[str, Any]) -> Dict[str, Optional[str]]:
     }
 
 
+def parse_encounter(resource: Dict[str, Any]) -> Dict[str, Optional[str]]:
+    encounter_type = get_first_coding(resource, "type")
+    encounter_class = resource.get("class", {})
+
+    return {
+        "fhir_encounter_id": resource.get("id"),
+        "patient_reference": extract_patient_reference(resource.get("subject", {})),
+        "status": resource.get("status"),
+        "encounter_class": encounter_class.get("code") or encounter_class.get("display"),
+        "encounter_type": encounter_type.get("display"),
+        "period_start": resource.get("period", {}).get("start"),
+        "period_end": resource.get("period", {}).get("end")
+    }
+
+
+def parse_medication_request(resource: Dict[str, Any]) -> Dict[str, Optional[str]]:
+    medication_data = get_first_coding(resource, "medicationCodeableConcept")
+
+    return {
+        "fhir_medication_request_id": resource.get("id"),
+        "patient_reference": extract_patient_reference(resource.get("subject", {})),
+        "status": resource.get("status"),
+        "intent": resource.get("intent"),
+        "medication_code": medication_data.get("code"),
+        "medication_name": medication_data.get("display"),
+        "authored_on": resource.get("authoredOn")
+    }
+
+
+def parse_allergy_intolerance(resource: Dict[str, Any]) -> Dict[str, Optional[str]]:
+    allergy_data = get_first_coding(resource, "code")
+
+    clinical_status = None
+    clinical_status_field = resource.get("clinicalStatus", {})
+    if clinical_status_field:
+        clinical_status = get_first_coding(resource, "clinicalStatus").get("code")
+
+    verification_status = None
+    verification_status_field = resource.get("verificationStatus", {})
+    if verification_status_field:
+        verification_status = get_first_coding(resource, "verificationStatus").get("code")
+
+    return {
+        "fhir_allergy_id": resource.get("id"),
+        "patient_reference": extract_patient_reference(resource.get("patient", {})),
+        "clinical_status": clinical_status,
+        "verification_status": verification_status,
+        "allergy_code": allergy_data.get("code"),
+        "allergy_name": allergy_data.get("display"),
+        "criticality": resource.get("criticality"),
+        "recorded_date": resource.get("recordedDate")
+    }
+
+
 def parse_fhir_bundle(bundle: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Parse a FHIR Bundle and extract Patient, Condition, and Observation resources.
+    Parse a FHIR Bundle and extract supported clinical resources.
     Assumes one main patient per bundle for MVP.
     """
     entries = bundle.get("entry", [])
@@ -136,6 +190,9 @@ def parse_fhir_bundle(bundle: Dict[str, Any]) -> Dict[str, Any]:
     patient_data = None
     conditions: List[Dict[str, Any]] = []
     observations: List[Dict[str, Any]] = []
+    encounters: List[Dict[str, Any]] = []
+    medication_requests: List[Dict[str, Any]] = []
+    allergies: List[Dict[str, Any]] = []
     resource_counts: Dict[str, int] = {}
 
     for entry in entries:
@@ -156,10 +213,22 @@ def parse_fhir_bundle(bundle: Dict[str, Any]) -> Dict[str, Any]:
         elif resource_type == "Observation":
             observations.append(parse_observation(resource))
 
+        elif resource_type == "Encounter":
+            encounters.append(parse_encounter(resource))
+
+        elif resource_type == "MedicationRequest":
+            medication_requests.append(parse_medication_request(resource))
+
+        elif resource_type == "AllergyIntolerance":
+            allergies.append(parse_allergy_intolerance(resource))
+
     return {
         "patient": patient_data,
         "conditions": conditions,
         "observations": observations,
+        "encounters": encounters,
+        "medication_requests": medication_requests,
+        "allergies": allergies,
         "resource_counts": resource_counts,
         "raw_bundle_type": bundle.get("type")
     }

@@ -108,6 +108,87 @@
         },
         "effectiveDateTime": "2026-03-15T10:35:00Z"
       }
+    },
+    {
+      "resource": {
+        "resourceType": "Encounter",
+        "id": "encounter-001",
+        "subject": {
+          "reference": "Patient/patient-001"
+        },
+        "status": "finished",
+        "class": {
+          "code": "AMB",
+          "display": "ambulatory"
+        },
+        "type": {
+          "coding": [
+            {
+              "code": "185349003",
+              "display": "Outpatient follow-up visit"
+            }
+          ]
+        },
+        "period": {
+          "start": "2026-03-15T10:00:00Z",
+          "end": "2026-03-15T10:45:00Z"
+        }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "id": "medicationrequest-001",
+        "subject": {
+          "reference": "Patient/patient-001"
+        },
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": {
+          "coding": [
+            {
+              "code": "860975",
+              "display": "Metformin 500 MG Oral Tablet"
+            }
+          ]
+        },
+        "authoredOn": "2026-03-15"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "AllergyIntolerance",
+        "id": "allergy-001",
+        "patient": {
+          "reference": "Patient/patient-001"
+        },
+        "clinicalStatus": {
+          "coding": [
+            {
+              "code": "active",
+              "display": "Active"
+            }
+          ]
+        },
+        "verificationStatus": {
+          "coding": [
+            {
+              "code": "confirmed",
+              "display": "Confirmed"
+            }
+          ]
+        },
+        "code": {
+          "coding": [
+            {
+              "code": "91936005",
+              "display": "Allergy to penicillin"
+            }
+          ]
+        },
+        "criticality": "high",
+        "recordedDate": "2024-01-01"
+      }
     }
   ]
 }

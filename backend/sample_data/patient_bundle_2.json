@@ -1,0 +1,45 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "patient-002",
+        "name": [
+          {
+            "given": ["Elena"],
+            "family": "Martinez"
+          }
+        ],
+        "birthDate": "1975-09-22"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "condition-101",
+        "subject": {
+          "reference": "Patient/patient-002"
+        },
+        "clinicalStatus": {
+          "coding": [
+            {
+              "code": "active",
+              "display": "Active"
+            }
+          ]
+        },
+        "code": {
+          "coding": [
+            {
+              "code": "44054006",
+              "display": "Type 2 diabetes mellitus"
+            }
+          ]
+        },
+        "onsetDateTime": "2025-04-18"
+      }
+    }
+  ]
+}

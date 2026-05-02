@@ -1,0 +1,22 @@
+flowchart LR
+  clinician[Clinician or Interviewer]
+  frontend[Next.js Frontend\nPatient workspace and insight views]
+  backend[FastAPI Backend\nFHIR ingestion and APIs]
+  parser[FHIR Parser\nPatient, conditions, observations,\nencounters, medications, allergies]
+  rules[Grounded Insight Engine\nSummaries, inconsistencies,\ncare gaps, evaluation]
+  quality[Quality Checker\nCompleteness and structured alerts]
+  db[(PostgreSQL\nClinical record store)]
+  samples[Seeded FHIR Bundles\nDemo patient datasets]
+  metrics[Metrics Script\nIngestion speed, alert precision,\nsummary grounding]
+
+  clinician --> frontend
+  frontend --> backend
+  backend --> parser
+  parser --> db
+  backend --> quality
+  backend --> rules
+  quality --> db
+  rules --> db
+  samples --> backend
+  metrics --> backend
+  metrics --> db

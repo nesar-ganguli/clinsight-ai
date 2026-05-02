@@ -28,9 +28,43 @@ class ObservationSchema(BaseModel):
     effective_date: Optional[str]
 
 
+class EncounterSchema(BaseModel):
+    fhir_encounter_id: Optional[str]
+    patient_reference: Optional[str]
+    status: Optional[str]
+    encounter_class: Optional[str]
+    encounter_type: Optional[str]
+    period_start: Optional[str]
+    period_end: Optional[str]
+
+
+class MedicationRequestSchema(BaseModel):
+    fhir_medication_request_id: Optional[str]
+    patient_reference: Optional[str]
+    status: Optional[str]
+    intent: Optional[str]
+    medication_code: Optional[str]
+    medication_name: Optional[str]
+    authored_on: Optional[str]
+
+
+class AllergyIntoleranceSchema(BaseModel):
+    fhir_allergy_id: Optional[str]
+    patient_reference: Optional[str]
+    clinical_status: Optional[str]
+    verification_status: Optional[str]
+    allergy_code: Optional[str]
+    allergy_name: Optional[str]
+    criticality: Optional[str]
+    recorded_date: Optional[str]
+
+
 class ParsedFHIRBundleResponse(BaseModel):
     patient: Optional[PatientSchema]
     conditions: List[ConditionSchema]
     observations: List[ObservationSchema]
+    encounters: List[EncounterSchema]
+    medication_requests: List[MedicationRequestSchema]
+    allergies: List[AllergyIntoleranceSchema]
     resource_counts: Dict[str, int]
     raw_bundle_type: Optional[str]

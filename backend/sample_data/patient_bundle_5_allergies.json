@@ -1,0 +1,286 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "patient-005",
+        "name": [
+          {
+            "given": ["Avery"],
+            "family": "Brooks"
+          }
+        ],
+        "gender": "female",
+        "birthDate": "1982-06-14"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "condition-005-1",
+        "subject": {
+          "reference": "Patient/patient-005"
+        },
+        "clinicalStatus": {
+          "coding": [
+            {
+              "code": "active",
+              "display": "Active"
+            }
+          ]
+        },
+        "code": {
+          "coding": [
+            {
+              "code": "38341003",
+              "display": "Hypertension"
+            }
+          ]
+        },
+        "onsetDateTime": "2024-08-20"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "observation-005-1",
+        "subject": {
+          "reference": "Patient/patient-005"
+        },
+        "code": {
+          "coding": [
+            {
+              "code": "85354-9",
+              "display": "Blood pressure panel"
+            }
+          ]
+        },
+        "valueString": "134/86",
+        "effectiveDateTime": "2026-04-10T09:15:00Z"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Encounter",
+        "id": "encounter-005-1",
+        "subject": {
+          "reference": "Patient/patient-005"
+        },
+        "status": "finished",
+        "class": {
+          "code": "AMB",
+          "display": "ambulatory"
+        },
+        "type": {
+          "coding": [
+            {
+              "code": "185349003",
+              "display": "Outpatient follow-up visit"
+            }
+          ]
+        },
+        "period": {
+          "start": "2026-04-10T09:00:00Z",
+          "end": "2026-04-10T09:45:00Z"
+        }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "id": "medicationrequest-005-1",
+        "subject": {
+          "reference": "Patient/patient-005"
+        },
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": {
+          "coding": [
+            {
+              "code": "197361",
+              "display": "Amlodipine 5 MG Oral Tablet"
+            }
+          ]
+        },
+        "authoredOn": "2026-04-10"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "AllergyIntolerance",
+        "id": "allergy-005-1",
+        "patient": {
+          "reference": "Patient/patient-005"
+        },
+        "clinicalStatus": {
+          "coding": [
+            {
+              "code": "active",
+              "display": "Active"
+            }
+          ]
+        },
+        "verificationStatus": {
+          "coding": [
+            {
+              "code": "confirmed",
+              "display": "Confirmed"
+            }
+          ]
+        },
+        "code": {
+          "coding": [
+            {
+              "code": "91936005",
+              "display": "Allergy to penicillin"
+            }
+          ]
+        },
+        "criticality": "high",
+        "recordedDate": "2022-01-12"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "AllergyIntolerance",
+        "id": "allergy-005-2",
+        "patient": {
+          "reference": "Patient/patient-005"
+        },
+        "clinicalStatus": {
+          "coding": [
+            {
+              "code": "active",
+              "display": "Active"
+            }
+          ]
+        },
+        "verificationStatus": {
+          "coding": [
+            {
+              "code": "confirmed",
+              "display": "Confirmed"
+            }
+          ]
+        },
+        "code": {
+          "coding": [
+            {
+              "code": "293586001",
+              "display": "Allergy to aspirin"
+            }
+          ]
+        },
+        "criticality": "low",
+        "recordedDate": "2022-03-05"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "AllergyIntolerance",
+        "id": "allergy-005-3",
+        "patient": {
+          "reference": "Patient/patient-005"
+        },
+        "clinicalStatus": {
+          "coding": [
+            {
+              "code": "active",
+              "display": "Active"
+            }
+          ]
+        },
+        "verificationStatus": {
+          "coding": [
+            {
+              "code": "confirmed",
+              "display": "Confirmed"
+            }
+          ]
+        },
+        "code": {
+          "coding": [
+            {
+              "code": "300916003",
+              "display": "Allergy to latex"
+            }
+          ]
+        },
+        "criticality": "high",
+        "recordedDate": "2023-07-19"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "AllergyIntolerance",
+        "id": "allergy-005-4",
+        "patient": {
+          "reference": "Patient/patient-005"
+        },
+        "clinicalStatus": {
+          "coding": [
+            {
+              "code": "active",
+              "display": "Active"
+            }
+          ]
+        },
+        "verificationStatus": {
+          "coding": [
+            {
+              "code": "unconfirmed",
+              "display": "Unconfirmed"
+            }
+          ]
+        },
+        "code": {
+          "coding": [
+            {
+              "code": "417532002",
+              "display": "Allergy to shellfish"
+            }
+          ]
+        },
+        "criticality": "high",
+        "recordedDate": "2024-02-11"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "AllergyIntolerance",
+        "id": "allergy-005-5",
+        "patient": {
+          "reference": "Patient/patient-005"
+        },
+        "clinicalStatus": {
+          "coding": [
+            {
+              "code": "active",
+              "display": "Active"
+            }
+          ]
+        },
+        "verificationStatus": {
+          "coding": [
+            {
+              "code": "confirmed",
+              "display": "Confirmed"
+            }
+          ]
+        },
+        "code": {
+          "coding": [
+            {
+              "code": "232347008",
+              "display": "Allergy to sulfonamide"
+            }
+          ]
+        },
+        "criticality": "low",
+        "recordedDate": "2025-05-30"
+      }
+    }
+  ]
+}

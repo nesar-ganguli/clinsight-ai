@@ -13,7 +13,13 @@ router = APIRouter()
 def get_quality_alerts(patient_id: int, db: Session = Depends(get_db)):
     patient = (
         db.query(Patient)
-        .options(joinedload(Patient.conditions), joinedload(Patient.observations))
+        .options(
+            joinedload(Patient.conditions),
+            joinedload(Patient.observations),
+            joinedload(Patient.encounters),
+            joinedload(Patient.medication_requests),
+            joinedload(Patient.allergies)
+        )
         .filter(Patient.id == patient_id)
         .first()
     )
