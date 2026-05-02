@@ -119,6 +119,27 @@ The seeded demo uses three FHIR Bundles in `backend/sample_data`:
 - `patient_bundle_2.json`: sparse diabetes chart with intentional missing demographics and coverage gaps
 - `patient_bundle_3.json`: chart with intentional contradictions, including conflicting condition statuses, duplicate observation values, encounter date conflict, and medication status conflict
 
+## Synthetic Raw Hospital Data
+
+Generate operational hospital-style source data into the `raw_*` tables only:
+
+```bash
+cd backend
+source .venv/bin/activate
+alembic upgrade head
+python scripts/generate_hospital_data.py --patients 1000 --seed 42
+```
+
+The generator creates linked raw patients, encounters, diagnoses, labs, medications, allergies, providers, and departments. It is reproducible by seed and includes controlled clinical examples such as diabetes patients missing A1c labs, hypertension patients missing blood pressure observations, conflicting lab values, and active diagnoses without active medications.
+
+Use a stable batch id when you want repeatable reruns of the same raw load:
+
+```bash
+python scripts/generate_hospital_data.py --patients 1000 --seed 42 --ingestion-batch-id demo-hospital-batch-001
+```
+
+Rerunning the same `source_system` and `ingestion_batch_id` replaces only matching raw rows. It does not insert into or reset curated clinical tables.
+
 ## Metrics
 
 Run:

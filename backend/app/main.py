@@ -24,6 +24,16 @@ from app.models.raw_hospital import (
     RawHospitalObservation,
     RawHospitalPatient,
 )
+from app.models.raw_operational import (
+    RawAllergy,
+    RawDepartment,
+    RawDiagnosis,
+    RawEncounter,
+    RawLab,
+    RawMedication,
+    RawPatient,
+    RawProvider,
+)
 from app.models.source_system import SourceSystem
 from app.models.staging import StagingClinicalResource, StagingPatientIdentity
 

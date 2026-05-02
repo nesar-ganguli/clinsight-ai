@@ -28,6 +28,16 @@ from app.models.raw_hospital import (
     RawHospitalObservation,
     RawHospitalPatient,
 )
+from app.models.raw_operational import (
+    RawAllergy,
+    RawDepartment,
+    RawDiagnosis,
+    RawEncounter,
+    RawLab,
+    RawMedication,
+    RawPatient,
+    RawProvider,
+)
 from app.models.source_system import SourceSystem
 from app.models.staging import StagingClinicalResource, StagingPatientIdentity
 
@@ -54,6 +64,14 @@ def clear_database():
         db.query(RawHospitalDiagnosis).delete()
         db.query(RawHospitalEncounter).delete()
         db.query(RawHospitalPatient).delete()
+        db.query(RawAllergy).delete()
+        db.query(RawMedication).delete()
+        db.query(RawLab).delete()
+        db.query(RawDiagnosis).delete()
+        db.query(RawEncounter).delete()
+        db.query(RawProvider).delete()
+        db.query(RawDepartment).delete()
+        db.query(RawPatient).delete()
         db.query(PatientSourceIdentifier).delete()
         db.query(AllergyIntolerance).delete()
         db.query(Condition).delete()
