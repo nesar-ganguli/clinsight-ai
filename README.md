@@ -140,6 +140,49 @@ python scripts/generate_hospital_data.py --patients 1000 --seed 42 --ingestion-b
 
 Rerunning the same `source_system` and `ingestion_batch_id` replaces only matching raw rows. It does not insert into or reset curated clinical tables.
 
+## dbt Staging Models
+
+The `dbt/` project transforms raw operational hospital tables into clean staging views. It targets PostgreSQL and leaves the `raw_*` tables untouched.
+
+Install dbt for Postgres:
+
+```bash
+python -m pip install -r dbt/requirements.txt
+```
+
+Create a local dbt profile:
+
+```bash
+cd dbt
+cp profiles.example.yml profiles.yml
+```
+
+Set connection values as environment variables if they differ from the example defaults:
+
+```bash
+export CLINSIGHT_DBT_HOST=localhost
+export CLINSIGHT_DBT_PORT=5432
+export CLINSIGHT_DBT_USER=clinsight
+export CLINSIGHT_DBT_PASSWORD=clinsight
+export CLINSIGHT_DBT_DBNAME=clinsight
+export CLINSIGHT_DBT_SCHEMA=analytics
+```
+
+Run and test the staging models:
+
+```bash
+dbt debug --profiles-dir .
+dbt run --profiles-dir . --select staging
+dbt test --profiles-dir . --select staging
+```
+
+If your raw hospital tables live outside the `public` schema, pass the raw schema explicitly:
+
+```bash
+dbt run --profiles-dir . --select staging --vars '{"raw_schema": "raw"}'
+dbt test --profiles-dir . --select staging --vars '{"raw_schema": "raw"}'
+```
+
 ## Metrics
 
 Run:

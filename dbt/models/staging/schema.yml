@@ -1,0 +1,235 @@
+version: 2
+
+sources:
+  - name: raw_hospital
+    description: "Operational hospital source tables loaded by the ClinSight synthetic raw data generator. These tables are append-friendly landing tables and should remain untouched by dbt transforms."
+    schema: "{{ var('raw_schema', 'public') }}"
+    tables:
+      - name: raw_patients
+        description: "Patient registration and demographic records from the hospital operational source."
+      - name: raw_encounters
+        description: "Visit, admission, and encounter records keyed by MRN and encounter number."
+      - name: raw_diagnoses
+        description: "Operational diagnosis rows associated with patients and encounters."
+      - name: raw_labs
+        description: "Laboratory and observation-like result rows, including A1c and blood pressure examples."
+      - name: raw_medications
+        description: "Medication order rows tied to patients, encounters, and ordering providers."
+      - name: raw_allergies
+        description: "Patient allergy records from the operational hospital source."
+      - name: raw_providers
+        description: "Provider master data used by encounters and medication orders."
+      - name: raw_departments
+        description: "Department and facility master data used by encounters and providers."
+
+models:
+  - name: stg_patients
+    description: "Cleaned patient demographic staging view. MRN is normalized as patient_id for downstream relationship checks."
+    columns:
+      - name: patient_record_id
+        description: "Deterministic unique row id derived from source system, ingestion batch, and source record id."
+        tests:
+          - not_null
+          - unique
+      - name: patient_id
+        description: "Normalized patient identifier from MRN."
+        tests:
+          - not_null
+      - name: enterprise_patient_id
+        description: "Enterprise-level patient identifier from the source registration system."
+      - name: full_name
+        description: "Patient display name assembled from source first and last name."
+      - name: birth_date
+        description: "Patient date of birth cast to a date."
+      - name: sex
+        description: "Standardized administrative sex value."
+
+  - name: stg_encounters
+    description: "Cleaned encounter staging view with normalized patient, department, provider, and timestamp fields."
+    columns:
+      - name: encounter_record_id
+        description: "Deterministic unique row id for an encounter source record."
+        tests:
+          - not_null
+          - unique
+      - name: encounter_id
+        description: "Operational encounter number."
+        tests:
+          - not_null
+      - name: patient_id
+        description: "Patient MRN associated with the encounter."
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_patients')
+                field: patient_id
+      - name: department_code
+        description: "Normalized department code for the encounter location."
+      - name: attending_provider_id
+        description: "Operational provider id for the attending clinician."
+      - name: admit_datetime
+        description: "Encounter start timestamp."
+      - name: discharge_datetime
+        description: "Encounter end timestamp when present."
+
+  - name: stg_diagnoses
+    description: "Cleaned diagnosis staging view with normalized ICD-style codes and diagnosis timestamps."
+    columns:
+      - name: diagnosis_record_id
+        description: "Deterministic unique row id for a diagnosis source record."
+        tests:
+          - not_null
+          - unique
+      - name: diagnosis_source_id
+        description: "Original diagnosis source record id."
+      - name: patient_id
+        description: "Patient MRN associated with the diagnosis."
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_patients')
+                field: patient_id
+      - name: encounter_id
+        description: "Encounter number associated with the diagnosis."
+      - name: diagnosis_code
+        description: "Uppercase diagnosis code."
+        tests:
+          - not_null
+      - name: diagnosis_description
+        description: "Human-readable diagnosis description."
+      - name: code_system
+        description: "Standardized diagnosis code system label."
+      - name: present_on_admission
+        description: "Boolean present-on-admission flag when supplied by source."
+
+  - name: stg_labs
+    description: "Cleaned lab result staging view, including normalized codes, numeric values, result status, and timestamps."
+    columns:
+      - name: lab_record_id
+        description: "Deterministic unique row id for a lab source record."
+        tests:
+          - not_null
+          - unique
+      - name: lab_source_id
+        description: "Original lab source record id."
+      - name: patient_id
+        description: "Patient MRN associated with the lab result."
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_patients')
+                field: patient_id
+      - name: encounter_id
+        description: "Encounter number associated with the lab result."
+      - name: lab_code
+        description: "Uppercase local or standard lab code."
+        tests:
+          - not_null
+      - name: lab_name
+        description: "Cleaned lab display name."
+      - name: result_numeric
+        description: "Numeric lab result value when available."
+      - name: abnormal_flag
+        description: "Standardized abnormal result flag."
+
+  - name: stg_medications
+    description: "Cleaned medication order staging view with normalized medication codes, names, route, frequency, and order status."
+    columns:
+      - name: medication_record_id
+        description: "Deterministic unique row id for a medication source record."
+        tests:
+          - not_null
+          - unique
+      - name: medication_source_id
+        description: "Original medication source record id."
+      - name: patient_id
+        description: "Patient MRN associated with the medication order."
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_patients')
+                field: patient_id
+      - name: encounter_id
+        description: "Encounter number associated with the medication order."
+      - name: medication_code
+        description: "Uppercase medication code."
+      - name: medication_name
+        description: "Cleaned medication display name."
+      - name: order_status
+        description: "Lowercase medication order status."
+      - name: ordering_provider_id
+        description: "Operational provider id for the ordering clinician."
+
+  - name: stg_allergies
+    description: "Cleaned allergy staging view with normalized allergen, reaction, severity, and active status fields."
+    columns:
+      - name: allergy_record_id
+        description: "Deterministic unique row id for an allergy source record."
+        tests:
+          - not_null
+          - unique
+      - name: allergy_source_id
+        description: "Original allergy source record id."
+      - name: patient_id
+        description: "Patient MRN associated with the allergy."
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_patients')
+                field: patient_id
+      - name: allergen_code
+        description: "Uppercase allergen code."
+      - name: allergen_name
+        description: "Cleaned allergen display name."
+      - name: allergy_status
+        description: "Lowercase allergy status."
+
+  - name: stg_providers
+    description: "Cleaned provider master staging view with normalized names, credentials, specialty, and department code."
+    columns:
+      - name: provider_record_id
+        description: "Deterministic unique row id for a provider source record."
+        tests:
+          - not_null
+          - unique
+      - name: provider_id
+        description: "Operational provider id."
+        tests:
+          - not_null
+      - name: npi
+        description: "National Provider Identifier when present."
+      - name: provider_name
+        description: "Provider display name assembled from first and last name."
+      - name: department_code
+        description: "Provider home department code."
+        tests:
+          - relationships:
+              arguments:
+                to: ref('stg_departments')
+                field: department_code
+
+  - name: stg_departments
+    description: "Cleaned department and facility master staging view."
+    columns:
+      - name: department_record_id
+        description: "Deterministic unique row id for a department source record."
+        tests:
+          - not_null
+          - unique
+      - name: department_code
+        description: "Normalized department code."
+        tests:
+          - not_null
+      - name: department_name
+        description: "Cleaned department display name."
+      - name: facility_code
+        description: "Normalized facility code."
+      - name: service_line
+        description: "Clinical or operational service line."
+      - name: is_active
+        description: "Boolean active flag derived from source active_flag."

@@ -1,7 +1,7 @@
 """Add raw operational hospital tables
 
-Revision ID: 0004_add_raw_operational_hospital_tables
-Revises: 0003_add_multisource_ingestion_layers
+Revision ID: 0004_raw_operational
+Revises: 0003_multisource_layers
 Create Date: 2026-05-02 00:00:00
 """
 
@@ -9,8 +9,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0004_add_raw_operational_hospital_tables"
-down_revision = "0003_add_multisource_ingestion_layers"
+revision = "0004_raw_operational"
+down_revision = "0003_multisource_layers"
 branch_labels = None
 depends_on = None
 

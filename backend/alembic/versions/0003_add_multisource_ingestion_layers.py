@@ -1,6 +1,6 @@
 """Add multi-source ingestion layers
 
-Revision ID: 0003_add_multisource_ingestion_layers
+Revision ID: 0003_multisource_layers
 Revises: 0002_add_extended_fhir_resources
 Create Date: 2026-05-01 00:00:00
 """
@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0003_add_multisource_ingestion_layers"
+revision = "0003_multisource_layers"
 down_revision = "0002_add_extended_fhir_resources"
 branch_labels = None
 depends_on = None

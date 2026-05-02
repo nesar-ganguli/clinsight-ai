@@ -21,4 +21,11 @@ backend/tests/test_clinsight.db
 
 # Frontend
 frontend/.next/
+frontend/.next-dev/
 frontend/node_modules/
+
+# dbt
+dbt/profiles.yml
+dbt/.user.yml
+dbt/target/
+dbt/logs/

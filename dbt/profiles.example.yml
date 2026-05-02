@@ -1,0 +1,13 @@
+clinsight_ai:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('CLINSIGHT_DBT_HOST', 'localhost') }}"
+      port: "{{ env_var('CLINSIGHT_DBT_PORT', '5432') | int }}"
+      user: "{{ env_var('CLINSIGHT_DBT_USER', 'clinsight') }}"
+      password: "{{ env_var('CLINSIGHT_DBT_PASSWORD', 'clinsight') }}"
+      dbname: "{{ env_var('CLINSIGHT_DBT_DBNAME', 'clinsight') }}"
+      schema: "{{ env_var('CLINSIGHT_DBT_SCHEMA', 'analytics') }}"
+      threads: 4
+      connect_timeout: 10
