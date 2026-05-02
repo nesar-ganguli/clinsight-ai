@@ -24,3 +24,4 @@ class Patient(Base):
     encounters = relationship("Encounter", back_populates="patient", cascade="all, delete-orphan")
     medication_requests = relationship("MedicationRequest", back_populates="patient", cascade="all, delete-orphan")
     allergies = relationship("AllergyIntolerance", back_populates="patient", cascade="all, delete-orphan")
+    source_identifiers = relationship("PatientSourceIdentifier", back_populates="patient", cascade="all, delete-orphan")

@@ -1,6 +1,12 @@
 import json
 from pathlib import Path
 
+from app.core.database import SessionLocal
+from app.models.curated_record_source import CuratedRecordSource
+from app.models.ingestion_batch import IngestionBatch
+from app.models.patient_source_identifier import PatientSourceIdentifier
+from app.models.source_system import SourceSystem
+
 
 SAMPLE_BUNDLE_PATH = Path(__file__).resolve().parent.parent / "sample_data" / "patient_bundle_1.json"
 
@@ -83,6 +89,44 @@ def test_upload_bundle_is_idempotent_for_same_fhir_patient(client):
     assert len(patient_payload["encounters"]) == 1
     assert len(patient_payload["medication_requests"]) == 1
     assert len(patient_payload["allergies"]) == 0
+
+
+def test_upload_bundle_records_multisource_ingestion_metadata(client):
+    bundle = load_sample_bundle()
+
+    response = client.post(
+        "/api/upload",
+        files={"file": ("patient_bundle_1.json", json.dumps(bundle), "application/json")}
+    )
+    assert response.status_code == 200
+    payload = response.json()
+
+    db = SessionLocal()
+    try:
+        source_system = db.query(SourceSystem).filter(SourceSystem.name == "ClinSight FHIR Upload").one()
+        ingestion_batch = db.query(IngestionBatch).one()
+        patient_identifier = db.query(PatientSourceIdentifier).one()
+        curated_sources = db.query(CuratedRecordSource).all()
+
+        assert source_system.system_type == "fhir_upload"
+        assert ingestion_batch.source_system_id == source_system.id
+        assert ingestion_batch.filename == "patient_bundle_1.json"
+        assert ingestion_batch.status == "processed"
+        assert ingestion_batch.record_count == sum(payload["resource_counts"].values())
+        assert patient_identifier.patient_id == payload["patient_id"]
+        assert patient_identifier.identifier_type == "fhir_patient_id"
+        assert patient_identifier.identifier_value == "patient-001"
+        assert len(curated_sources) == sum(payload["resource_counts"].values())
+        assert {source.curated_table_name for source in curated_sources} == {
+            "patients",
+            "conditions",
+            "observations",
+            "encounters",
+            "medication_requests",
+            "allergy_intolerances",
+        }
+    finally:
+        db.close()
 
 
 def test_list_patients_supports_search(client):

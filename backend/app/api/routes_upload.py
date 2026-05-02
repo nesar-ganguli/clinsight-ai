@@ -1,4 +1,5 @@
 import json
+import hashlib
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
@@ -25,7 +26,8 @@ async def upload_fhir_bundle(file: UploadFile = File(...), db: Session = Depends
         raise HTTPException(status_code=400, detail="Uploaded JSON is not a FHIR Bundle")
 
     try:
-        result = ingest_fhir_bundle(bundle, db)
+        content_hash = hashlib.sha256(content).hexdigest()
+        result = ingest_fhir_bundle(bundle, db, filename=file.filename, content_hash=content_hash)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

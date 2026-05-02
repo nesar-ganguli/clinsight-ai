@@ -13,6 +13,19 @@ from app.models.observation import Observation
 from app.models.encounter import Encounter
 from app.models.medication_request import MedicationRequest
 from app.models.allergy_intolerance import AllergyIntolerance
+from app.models.curated_record_source import CuratedRecordSource
+from app.models.ingestion_batch import IngestionBatch
+from app.models.patient_source_identifier import PatientSourceIdentifier
+from app.models.raw_hospital import (
+    RawHospitalAllergy,
+    RawHospitalDiagnosis,
+    RawHospitalEncounter,
+    RawHospitalMedication,
+    RawHospitalObservation,
+    RawHospitalPatient,
+)
+from app.models.source_system import SourceSystem
+from app.models.staging import StagingClinicalResource, StagingPatientIdentity
 
 app = FastAPI(
     title=settings.app_name,
