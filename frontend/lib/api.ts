@@ -1,9 +1,13 @@
 import {
   AuthUser,
+  AuditLogListResponse,
   DemoUsersResponse,
+  ExternalFhirImportResponse,
+  ExternalFhirPatientListResponse,
   LoginResponse,
   Patient,
   PatientAiInsightsResponse,
+  PatientChatResponse,
   PatientListResponse,
   QualityAlertsResponse,
   UploadResponse,
@@ -86,8 +90,36 @@ export function getPatientAiInsights(patientId: number | string, token?: string 
   return request<PatientAiInsightsResponse>(`/api/patients/${patientId}/ai-insights`, {token});
 }
 
+export function askPatientQuestion(patientId: number | string, question: string, token?: string | null) {
+  return request<PatientChatResponse>(`/api/patients/${patientId}/chat`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({question}),
+    token,
+  });
+}
+
 export function getDemoUsers() {
   return request<DemoUsersResponse>("/api/demo-users");
+}
+
+export function listAuditLogs(token?: string | null) {
+  return request<AuditLogListResponse>("/api/audit-logs?limit=100&offset=0", {token});
+}
+
+export function searchSmartFhirPatients(search?: string) {
+  const params = new URLSearchParams();
+  if (search) {
+    params.set("search", search);
+  }
+  params.set("count", "10");
+  return request<ExternalFhirPatientListResponse>(`/api/external-fhir/smart/patients?${params.toString()}`);
+}
+
+export function importSmartFhirPatient(patientId: string) {
+  return request<ExternalFhirImportResponse>(`/api/external-fhir/smart/import/${encodeURIComponent(patientId)}`, {
+    method: "POST",
+  });
 }
 
 export async function uploadBundle(file: File) {

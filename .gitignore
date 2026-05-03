@@ -18,6 +18,10 @@ backend/.env
 
 # Local test databases
 backend/tests/test_clinsight.db
+*.db-wal
+*.db-shm
+*.db-journal
+clinsight.db
 
 # Frontend
 frontend/.next/

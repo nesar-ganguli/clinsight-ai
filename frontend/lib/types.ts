@@ -86,6 +86,25 @@ export type UploadResponse = {
   resource_counts: Record<string, number>;
 };
 
+export type ExternalFhirPatientSummary = {
+  id: string;
+  full_name: string | null;
+  gender: string | null;
+  birth_date: string | null;
+};
+
+export type ExternalFhirPatientListResponse = {
+  items: ExternalFhirPatientSummary[];
+  total: number;
+  source_system: string;
+  fhir_base_url: string;
+};
+
+export type ExternalFhirImportResponse = UploadResponse & {
+  source_system: string;
+  external_patient_id: string;
+};
+
 export type QualityAlert = {
   code: string;
   severity: "critical" | "warning" | "info";
@@ -157,6 +176,20 @@ export type PatientAiInsightsResponse = {
   evaluation: InsightEvaluation;
 };
 
+export type PatientChatResponse = {
+  patient_id: number;
+  question: string;
+  answer: string;
+  confidence: "high" | "medium" | "low";
+  generated_by: string;
+  retrieval_strategy: string;
+  citations: InsightCitation[];
+  safety_notes: string[];
+  refused: boolean;
+  validation_errors: string[];
+  llm_used: boolean;
+};
+
 export type DemoUser = {
   id: string;
   name: string;
@@ -183,4 +216,24 @@ export type LoginResponse = {
   access_token: string;
   token_type: "bearer";
   user: AuthUser;
+};
+
+export type AuditLog = {
+  id: number;
+  user_id: number | null;
+  username: string | null;
+  role: string | null;
+  action: string;
+  resource_type: string | null;
+  resource_id: string | null;
+  patient_id: number | null;
+  event_timestamp: string;
+  metadata: Record<string, unknown>;
+};
+
+export type AuditLogListResponse = {
+  items: AuditLog[];
+  total: number;
+  limit: number;
+  offset: number;
 };

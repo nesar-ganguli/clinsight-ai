@@ -70,10 +70,31 @@ Seed demo patients:
 docker compose --profile tools run --rm seed
 ```
 
+Run the full multi-source hospital pipeline:
+
+```bash
+docker compose --profile tools run --rm generate-hospital-data
+docker compose --profile tools run --rm dbt-run
+docker compose --profile tools run --rm generate-fhir
+```
+
 Run interview metrics:
 
 ```bash
 docker compose --profile tools run --rm metrics
+```
+
+Run backend tests in Docker:
+
+```bash
+docker compose --profile tools run --rm backend-tests
+```
+
+You can tune the generated demo size without editing compose:
+
+```bash
+HOSPITAL_PATIENTS=250 HOSPITAL_SEED=7 PIPELINE_BATCH_ID=demo-batch-007 docker compose --profile tools run --rm generate-hospital-data
+PIPELINE_BATCH_ID=demo-batch-007 docker compose --profile tools run --rm generate-fhir
 ```
 
 ## Run Locally
@@ -139,6 +160,84 @@ python scripts/generate_hospital_data.py --patients 1000 --seed 42 --ingestion-b
 ```
 
 Rerunning the same `source_system` and `ingestion_batch_id` replaces only matching raw rows. It does not insert into or reset curated clinical tables.
+
+## Full Local Pipeline With Docker Compose
+
+Start PostgreSQL, FastAPI, and the Next.js app:
+
+```bash
+docker compose up --build
+```
+
+Then run each tool step in a second terminal:
+
+```bash
+docker compose --profile tools run --rm generate-hospital-data
+docker compose --profile tools run --rm dbt-run
+docker compose --profile tools run --rm generate-fhir
+```
+
+What each step does:
+
+- `generate-hospital-data`: migrates the backend database, then loads synthetic operational rows into `raw_*` tables.
+- `dbt-run`: builds and tests staging plus curated clinical dbt views in PostgreSQL.
+- `generate-fhir`: reads curated clinical views and writes uploadable FHIR Bundle JSON to `backend/data/generated_fhir_bundles/`.
+- `backend-tests`: runs the backend pytest suite in a container.
+- `seed`: keeps the original seeded FHIR demo flow available.
+- `metrics`: runs the optional interview metrics script.
+
+Default pipeline values:
+
+```bash
+HOSPITAL_PATIENTS=1000
+HOSPITAL_SEED=42
+PIPELINE_BATCH_ID=synthetic-42-1000
+FHIR_LIMIT=50
+```
+
+Override them inline when needed:
+
+```bash
+HOSPITAL_PATIENTS=100 PIPELINE_BATCH_ID=small-demo docker compose --profile tools run --rm generate-hospital-data
+PIPELINE_BATCH_ID=small-demo FHIR_LIMIT=25 docker compose --profile tools run --rm generate-fhir
+```
+
+The app remains available at `http://localhost:3000`; the API remains available at `http://localhost:8000`.
+
+## SMART Health IT External FHIR Import
+
+ClinSight can also import demo patients from the public SMART Health IT HL7 FHIR R4 sandbox at `https://r4.smarthealthit.org`.
+
+Admins and data reviewers can use the dashboard panel to search sandbox patients by name and import one patient at a time. The backend fetches Patient, Encounter, Condition, Observation, MedicationRequest, and AllergyIntolerance resources, wraps them as a FHIR Bundle, and sends that bundle through the same ingestion path as local JSON uploads.
+
+API endpoints:
+
+```bash
+GET /api/external-fhir/smart/patients?search=smith&count=10
+POST /api/external-fhir/smart/import/{patient_id}
+```
+
+Imported SMART records are tagged with source metadata as `SMART Health IT R4 Sandbox`, so patient charts, citations, and audit logs can distinguish them from local uploads and synthetic hospital data.
+
+## Grounded Patient Chart Assistant
+
+Patient charts include a grounded Q&A assistant for chart-review questions such as:
+
+- `Has this patient had an A1c recently?`
+- `Show recent blood pressure readings.`
+- `What active medications are documented?`
+
+The assistant uses structured patient records first, retrieves only patient-specific evidence, returns source citations, refuses diagnosis/treatment recommendations, and writes an audit event for each question. It works without an LLM by using deterministic grounded fallback answers.
+
+To enable optional LLM-assisted wording with GitHub Models, set:
+
+```bash
+LLM_PROVIDER=github
+GITHUB_MODELS_TOKEN=your_github_pat
+GITHUB_MODELS_MODEL=openai/gpt-4o-mini
+```
+
+The backend still validates citation IDs and falls back to deterministic answers if the LLM call fails or returns unsupported output. An OpenAI Responses API path is also supported with `LLM_PROVIDER=openai`, `OPENAI_API_KEY`, and `OPENAI_MODEL`.
 
 ## dbt Staging Models
 

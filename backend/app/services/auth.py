@@ -4,7 +4,7 @@ import hmac
 import json
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -12,8 +12,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.models.audit_log import AuditLog
 from app.models.user import User
+from app.services.audit import write_audit_event
 
 
 ROLES = {"admin", "clinician", "care_coordinator", "data_reviewer"}
@@ -137,16 +137,14 @@ def require_roles(*roles: str):
 
 
 def log_patient_access(db: Session, user: User, patient_id: int, action: str = "patient_chart_access") -> None:
-    db.add(
-        AuditLog(
-            user_id=user.id,
-            username=user.username,
-            role=user.role,
-            action=action,
-            patient_id=patient_id,
-        )
+    write_audit_event(
+        db,
+        user=user,
+        action=action,
+        resource_type="patient",
+        resource_id=str(patient_id),
+        metadata={"patient_id": patient_id},
     )
-    db.commit()
 
 
 def _b64_json(value: Dict[str, Any]) -> str:
