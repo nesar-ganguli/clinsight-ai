@@ -20,8 +20,10 @@ from app.services.fhir_parser import parse_fhir_bundle
 
 FHIR_UPLOAD_SOURCE_NAME = "ClinSight FHIR Upload"
 GENERATED_FHIR_SOURCE_NAME = "ClinSight Generated FHIR Bundle"
+SMART_HEALTH_IT_SOURCE_NAME = "SMART Health IT R4 Sandbox"
 FHIR_UPLOAD_TRANSFORM_VERSION = "fhir-upload-v1"
 GENERATED_FHIR_SOURCE_MARKER = "clinsight-generated-fhir-bundle"
+SMART_HEALTH_IT_SOURCE_MARKER = "smart-health-it-r4-sandbox"
 
 
 def ingest_fhir_bundle(
@@ -267,6 +269,14 @@ def _get_or_create_fhir_source(db: Session, bundle: Dict[str, Any]) -> SourceSys
             facility_name="ClinSight synthetic FHIR generator",
             external_system_id=GENERATED_FHIR_SOURCE_MARKER,
         )
+    if _is_smart_health_it_bundle(bundle):
+        return _get_or_create_source_system(
+            db,
+            name=SMART_HEALTH_IT_SOURCE_NAME,
+            system_type="external_fhir_api",
+            facility_name="SMART Health IT public sandbox",
+            external_system_id=SMART_HEALTH_IT_SOURCE_MARKER,
+        )
 
     return _get_or_create_source_system(
         db,
@@ -311,6 +321,15 @@ def _is_generated_fhir_bundle(bundle: Dict[str, Any]) -> bool:
 
     tags = meta.get("tag", [])
     return any(tag.get("code") == "generated-fhir-bundle" for tag in tags if isinstance(tag, dict))
+
+
+def _is_smart_health_it_bundle(bundle: Dict[str, Any]) -> bool:
+    meta = bundle.get("meta", {})
+    if meta.get("source") == SMART_HEALTH_IT_SOURCE_MARKER:
+        return True
+
+    tags = meta.get("tag", [])
+    return any(tag.get("code") == "smart-health-it-r4-sandbox" for tag in tags if isinstance(tag, dict))
 
 
 def _apply_source_metadata(

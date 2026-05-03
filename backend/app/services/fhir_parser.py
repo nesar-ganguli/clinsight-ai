@@ -6,6 +6,14 @@ def get_first_coding(resource: Dict[str, Any], field_name: str) -> Dict[str, Opt
     Extract the first coding code/display from a FHIR CodeableConcept field.
     """
     field = resource.get(field_name, {})
+    if isinstance(field, list):
+        field = field[0] if field else {}
+    if not isinstance(field, dict):
+        return {
+            "code": None,
+            "display": None
+        }
+
     codings = field.get("coding", [])
 
     if codings and isinstance(codings, list):

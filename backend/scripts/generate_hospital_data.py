@@ -19,6 +19,7 @@ from app.models.raw_operational import (
     RawPatient,
     RawProvider,
 )
+from app.services.audit import write_audit_event
 
 
 DEFAULT_SOURCE_SYSTEM = "internal_hospital_ods"
@@ -543,6 +544,22 @@ def main() -> None:
     try:
         clear_batch(db, args.source_system, batch_id)
         db.add_all(records)
+        write_audit_event(
+            db,
+            action="hospital_data_batch_generated",
+            resource_type="ingestion_batch",
+            resource_id=batch_id,
+            metadata={
+                "source_system": args.source_system,
+                "ingestion_batch_id": batch_id,
+                "patient_count": args.patients,
+                "seed": args.seed,
+                "table_counts": counts,
+            },
+            username="system",
+            role="system",
+            commit=False,
+        )
         db.commit()
     except Exception:
         db.rollback()

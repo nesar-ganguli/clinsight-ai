@@ -1,18 +1,23 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { DemoUsersPanel } from "@/components/demo-users-panel";
+import { ExternalFhirPanel } from "@/components/external-fhir-panel";
 import { PatientListPanel } from "@/components/patient-list-panel";
 import { UploadPanel } from "@/components/upload-panel";
-import { canUpload, clearSession, getStoredUser } from "@/lib/auth";
+import { canImportExternalFhir, canUpload, canViewAuditLogs, clearSession, getStoredUser } from "@/lib/auth";
 import { AuthUser, UploadResponse } from "@/lib/types";
 
 export default function HomePage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [latestUpload, setLatestUpload] = useState<UploadResponse | null>(null);
-  const [user, setUser] = useState<AuthUser | null>(() => getStoredUser());
+  const [user, setUser] = useState<AuthUser | null>(null);
+
+  useEffect(() => {
+    setUser(getStoredUser());
+  }, []);
 
   function handleUploaded(result: UploadResponse) {
     setLatestUpload(result);
@@ -33,6 +38,9 @@ export default function HomePage() {
             <>
               <span className="pill">{user.full_name || user.username}</span>
               <span className="pill">{user.role.replaceAll("_", " ")}</span>
+              {canViewAuditLogs(user.role) ? (
+                <Link href="/audit" className="pill">Audit logs</Link>
+              ) : null}
               <button
                 className="pill"
                 type="button"
@@ -61,7 +69,10 @@ export default function HomePage() {
       <section className="dashboard-grid">
         <div className="stack">
           {user && canUpload(user.role) ? (
-            <UploadPanel onUploaded={handleUploaded} />
+            <>
+              <UploadPanel onUploaded={handleUploaded} />
+              {canImportExternalFhir(user.role) ? <ExternalFhirPanel onImported={handleUploaded} /> : null}
+            </>
           ) : (
             <section className="panel">
               <div className="panel-header">

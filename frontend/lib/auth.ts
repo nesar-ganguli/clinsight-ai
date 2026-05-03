@@ -37,6 +37,10 @@ export function canUpload(role: UserRole) {
   return role === "admin" || role === "data_reviewer";
 }
 
+export function canImportExternalFhir(role: UserRole) {
+  return role === "admin" || role === "data_reviewer";
+}
+
 export function canViewInsights(role: UserRole) {
   return role === "admin" || role === "clinician";
 }
@@ -50,5 +54,9 @@ export function canViewQuality(role: UserRole) {
 }
 
 export function canViewSourceMetadata(role: UserRole) {
+  return role === "admin" || role === "data_reviewer";
+}
+
+export function canViewAuditLogs(role: UserRole) {
   return role === "admin" || role === "data_reviewer";
 }

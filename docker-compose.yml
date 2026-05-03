@@ -41,6 +41,77 @@ services:
     depends_on:
       - backend
 
+  generate-hospital-data:
+    build:
+      context: ./backend
+    profiles:
+      - tools
+    environment:
+      DATABASE_URL: postgresql+psycopg2://clinsight:clinsight@db:5432/clinsight
+      HOSPITAL_PATIENTS: ${HOSPITAL_PATIENTS:-1000}
+      HOSPITAL_SEED: ${HOSPITAL_SEED:-42}
+      HOSPITAL_BATCH_ID: ${PIPELINE_BATCH_ID:-synthetic-42-1000}
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "alembic upgrade head &&
+      python scripts/generate_hospital_data.py
+      --patients $$HOSPITAL_PATIENTS
+      --seed $$HOSPITAL_SEED
+      --ingestion-batch-id $$HOSPITAL_BATCH_ID"
+
+  dbt-run:
+    build:
+      context: ./dbt
+    profiles:
+      - tools
+    environment:
+      CLINSIGHT_DBT_HOST: db
+      CLINSIGHT_DBT_PORT: "5432"
+      CLINSIGHT_DBT_USER: clinsight
+      CLINSIGHT_DBT_PASSWORD: clinsight
+      CLINSIGHT_DBT_DBNAME: clinsight
+      CLINSIGHT_DBT_SCHEMA: analytics
+      DBT_SELECT: ${DBT_SELECT:-staging marts.clinical}
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "cp profiles.example.yml profiles.yml &&
+      dbt run --profiles-dir . --select $$DBT_SELECT &&
+      dbt test --profiles-dir . --select $$DBT_SELECT"
+
+  generate-fhir:
+    build:
+      context: ./backend
+    profiles:
+      - tools
+    environment:
+      DATABASE_URL: postgresql+psycopg2://clinsight:clinsight@db:5432/clinsight
+      CLINICAL_SCHEMA: analytics_clinical
+      FHIR_LIMIT: ${FHIR_LIMIT:-50}
+      FHIR_BATCH_ID: ${PIPELINE_BATCH_ID:-synthetic-42-1000}
+      FHIR_OUTPUT_DIR: ${FHIR_OUTPUT_DIR:-/app/data/generated_fhir_bundles}
+    volumes:
+      - ./backend/data/generated_fhir_bundles:/app/data/generated_fhir_bundles
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "alembic upgrade head &&
+      python scripts/generate_fhir_bundles.py
+      --limit $$FHIR_LIMIT
+      --output $$FHIR_OUTPUT_DIR
+      --ingestion-batch-id $$FHIR_BATCH_ID"
+
+  backend-tests:
+    build:
+      context: ./backend
+    profiles:
+      - tools
+    command: python -m pytest
+
   seed:
     build:
       context: ./backend

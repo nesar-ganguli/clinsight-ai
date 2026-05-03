@@ -2,6 +2,7 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { PatientChatPanel } from "@/components/patient-chat-panel";
 import { getCurrentUser, getPatient, getPatientAiInsights, getQualityAlerts } from "@/lib/api";
 import { canViewCareGaps, canViewInsights, canViewQuality, canViewSourceMetadata, TOKEN_STORAGE_KEY } from "@/lib/auth";
 import { buildTimeline } from "@/lib/timeline";
@@ -42,31 +43,29 @@ export default async function PatientDetailPage({
   }
 
   const user = await getCurrentUser(token);
-  const [patient, quality, insights] = await Promise.all([
-    getPatient(id, token),
-    canViewQuality(user.role)
-      ? getQualityAlerts(id, token)
-      : Promise.resolve<QualityAlertsResponse>({patient_id: Number(id), alerts: []}),
-    canViewInsights(user.role) || canViewCareGaps(user.role)
-      ? getPatientAiInsights(id, token)
-      : Promise.resolve<PatientAiInsightsResponse>({
-          patient_id: Number(id),
-          generated_by: "ClinSight grounded insight rules v1",
-          disclaimer: "AI-assisted chart review. Verify all findings against the source record before clinical use.",
-          summary_sections: [],
-          inconsistencies: [],
-          care_gaps: [],
-          citations: [],
-          evaluation: {
-            grounded_claims: 0,
-            unsupported_claims: 0,
-            unresolved_citations: 0,
-            source_coverage: 0,
-            hallucination_risk: "low",
-            checks: [],
-          },
-        }),
-  ]);
+  const patient = await getPatient(id, token);
+  const quality = canViewQuality(user.role)
+    ? await getQualityAlerts(id, token)
+    : {patient_id: Number(id), alerts: []};
+  const insights = canViewInsights(user.role) || canViewCareGaps(user.role)
+    ? await getPatientAiInsights(id, token)
+    : {
+        patient_id: Number(id),
+        generated_by: "ClinSight grounded insight rules v1",
+        disclaimer: "AI-assisted chart review. Verify all findings against the source record before clinical use.",
+        summary_sections: [],
+        inconsistencies: [],
+        care_gaps: [],
+        citations: [],
+        evaluation: {
+          grounded_claims: 0,
+          unsupported_claims: 0,
+          unresolved_citations: 0,
+          source_coverage: 0,
+          hallucination_risk: "low",
+          checks: [],
+        },
+      } satisfies PatientAiInsightsResponse;
 
   const timeline = buildTimeline(patient);
   const citationsById = new Map(insights.citations.map((citation) => [citation.id, citation]));
@@ -187,6 +186,8 @@ export default async function PatientDetailPage({
               ))}
             </div>
           </section>
+
+          <PatientChatPanel patientId={patient.id} showSourceMetadata={canViewSourceMetadata(user.role)} />
 
           <section className="panel">
             <div className="panel-header">

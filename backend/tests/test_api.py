@@ -244,6 +244,136 @@ def test_ai_insights_endpoint_returns_cited_report(client):
         for claim in section["claims"]
         for citation_id in claim["citation_ids"]
     )
+    db = SessionLocal()
+    try:
+        insight_audit = (
+            db.query(AuditLog)
+            .filter(AuditLog.patient_id == patient_id, AuditLog.action == "ai_insight_report_viewed")
+            .one()
+        )
+        assert insight_audit.resource_type == "patient"
+        assert insight_audit.resource_id == str(patient_id)
+        assert insight_audit.event_metadata["citation_count"] == len(payload["citations"])
+    finally:
+        db.close()
+
+
+def test_patient_chat_answers_with_grounded_citations_and_audit(client):
+    bundle = load_sample_bundle()
+    upload_response = client.post(
+        "/api/upload",
+        files={"file": ("patient_bundle_1.json", json.dumps(bundle), "application/json")},
+        headers=auth_headers(client),
+    )
+    patient_id = upload_response.json()["patient_id"]
+
+    response = client.post(
+        f"/api/patients/{patient_id}/chat",
+        json={"question": "Has this patient had an A1c recently?"},
+        headers=auth_headers(client, "clinician"),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["patient_id"] == patient_id
+    assert payload["llm_used"] is False
+    assert payload["citations"]
+    assert "diabetes_a1c" in payload["retrieval_strategy"]
+    assert any(citation["resource_type"] == "Observation" for citation in payload["citations"])
+
+    db = SessionLocal()
+    try:
+        chat_audit = (
+            db.query(AuditLog)
+            .filter(AuditLog.patient_id == patient_id, AuditLog.action == "patient_chat_question_asked")
+            .one()
+        )
+        assert chat_audit.resource_type == "patient"
+        assert chat_audit.event_metadata["question"] == "Has this patient had an A1c recently?"
+        assert chat_audit.event_metadata["citation_count"] == len(payload["citations"])
+    finally:
+        db.close()
+
+
+def test_patient_chat_refuses_treatment_advice(client):
+    bundle = load_sample_bundle()
+    upload_response = client.post(
+        "/api/upload",
+        files={"file": ("patient_bundle_1.json", json.dumps(bundle), "application/json")},
+        headers=auth_headers(client),
+    )
+    patient_id = upload_response.json()["patient_id"]
+
+    response = client.post(
+        f"/api/patients/{patient_id}/chat",
+        json={"question": "What medication should I prescribe for this patient?"},
+        headers=auth_headers(client, "clinician"),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["refused"] is True
+    assert "cannot provide diagnosis or treatment recommendations" in payload["answer"]
+
+
+def test_patient_chat_uses_github_models_when_configured(client, monkeypatch):
+    bundle = load_sample_bundle()
+    upload_response = client.post(
+        "/api/upload",
+        files={"file": ("patient_bundle_1.json", json.dumps(bundle), "application/json")},
+        headers=auth_headers(client),
+    )
+    patient_id = upload_response.json()["patient_id"]
+
+    class FakeGithubResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "answer": "The available records include a documented A1c-related observation.",
+                                    "confidence": "high",
+                                    "citation_ids": ["Observation:1"],
+                                    "safety_notes": ["Grounded to retrieved evidence."],
+                                }
+                            )
+                        }
+                    }
+                ]
+            }
+
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        return FakeGithubResponse()
+
+    monkeypatch.setattr("app.services.patient_chat.settings.llm_provider", "github")
+    monkeypatch.setattr("app.services.patient_chat.settings.github_models_token", "ghp_test")
+    monkeypatch.setattr("app.services.patient_chat.settings.github_models_model", "openai/gpt-4o-mini")
+    monkeypatch.setattr("app.services.patient_chat.httpx.post", fake_post)
+
+    response = client.post(
+        f"/api/patients/{patient_id}/chat",
+        json={"question": "Has this patient had an A1c recently?"},
+        headers=auth_headers(client, "clinician"),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["llm_used"] is True
+    assert payload["generated_by"].startswith("GitHub Models openai/gpt-4o-mini")
+    assert captured["url"] == "https://models.github.ai/inference/chat/completions"
+    assert captured["headers"]["Authorization"] == "Bearer ghp_test"
+    assert captured["json"]["model"] == "openai/gpt-4o-mini"
+    assert captured["json"]["response_format"]["type"] == "json_schema"
 
 
 def test_dbt_curated_patient_surfaces_in_api_quality_and_insights(client):
@@ -328,10 +458,123 @@ def test_role_permissions_and_patient_access_audit(client):
 
     db = SessionLocal()
     try:
-        audit_log = db.query(AuditLog).filter(AuditLog.patient_id == patient_id).one()
+        audit_log = (
+            db.query(AuditLog)
+            .filter(AuditLog.patient_id == patient_id, AuditLog.action == "patient_chart_access")
+            .one()
+        )
         assert audit_log.username == "clinician"
         assert audit_log.role == "clinician"
         assert audit_log.action == "patient_chart_access"
+        assert audit_log.resource_type == "patient"
+        assert audit_log.resource_id == str(patient_id)
+        assert audit_log.event_metadata == {"patient_id": patient_id}
+    finally:
+        db.close()
+
+
+def test_admin_can_view_audit_logs_and_dbt_events(client):
+    admin_headers = auth_headers(client)
+    dbt_response = client.post(
+        "/api/audit-logs/dbt-transformation",
+        json={
+            "status": "completed",
+            "invocation_id": "dbt-test-001",
+            "selected_models": ["marts.clinical"],
+            "metadata": {"row_count": 1000},
+        },
+        headers=admin_headers,
+    )
+    assert dbt_response.status_code == 200
+
+    audit_response = client.get("/api/audit-logs", headers=admin_headers)
+
+    assert audit_response.status_code == 200
+    payload = audit_response.json()
+    actions = {item["action"] for item in payload["items"]}
+    assert "user_login" in actions
+    assert "dbt_transformation_completed" in actions
+
+    dbt_event = next(item for item in payload["items"] if item["action"] == "dbt_transformation_completed")
+    assert dbt_event["resource_type"] == "dbt_transformation"
+    assert dbt_event["resource_id"] == "dbt-test-001"
+    assert dbt_event["metadata"]["selected_models"] == ["marts.clinical"]
+
+
+def test_clinician_cannot_view_audit_logs(client):
+    response = client.get("/api/audit-logs", headers=auth_headers(client, "clinician"))
+    assert response.status_code == 403
+
+
+def test_smart_health_it_patient_search_requires_data_reviewer_role(client, monkeypatch):
+    def fake_search_smart_patients(search=None, count=10):
+        return [
+            {
+                "id": "smart-patient-001",
+                "full_name": "SMART Patient",
+                "gender": "female",
+                "birth_date": "1980-01-01",
+            }
+        ]
+
+    monkeypatch.setattr("app.api.routes_external_fhir.search_smart_patients", fake_search_smart_patients)
+
+    denied_response = client.get(
+        "/api/external-fhir/smart/patients",
+        headers=auth_headers(client, "clinician"),
+    )
+    assert denied_response.status_code == 403
+
+    response = client.get(
+        "/api/external-fhir/smart/patients",
+        params={"search": "smart"},
+        headers=auth_headers(client, "reviewer"),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source_system"] == "SMART Health IT R4 Sandbox"
+    assert payload["items"][0]["id"] == "smart-patient-001"
+
+
+def test_smart_health_it_import_reuses_fhir_ingestion_and_source_metadata(client, monkeypatch):
+    bundle = load_sample_bundle()
+    bundle["meta"] = {
+        "source": "smart-health-it-r4-sandbox",
+        "tag": [{"code": "smart-health-it-r4-sandbox"}],
+    }
+    bundle["entry"][0]["resource"]["id"] = "smart-patient-001"
+    update_patient_reference(bundle, "smart-patient-001")
+
+    monkeypatch.setattr("app.api.routes_external_fhir.fetch_smart_patient_bundle", lambda patient_id: bundle)
+
+    response = client.post(
+        "/api/external-fhir/smart/import/smart-patient-001",
+        headers=auth_headers(client, "reviewer"),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source_system"] == "SMART Health IT R4 Sandbox"
+    assert payload["external_patient_id"] == "smart-patient-001"
+    assert payload["resource_counts"]["Patient"] == 1
+
+    db = SessionLocal()
+    try:
+        patient = db.query(Patient).filter(Patient.id == payload["patient_id"]).one()
+        source_system = db.query(SourceSystem).filter(SourceSystem.name == "SMART Health IT R4 Sandbox").one()
+        import_audit = (
+            db.query(AuditLog)
+            .filter(AuditLog.action == "external_fhir_patient_imported")
+            .one()
+        )
+
+        assert source_system.system_type == "external_fhir_api"
+        assert patient.source_type == "external_fhir_api"
+        assert patient.source_system == "SMART Health IT R4 Sandbox"
+        assert patient.source_record_id == "smart-patient-001"
+        assert import_audit.resource_id == str(payload["patient_id"])
+        assert import_audit.event_metadata["external_patient_id"] == "smart-patient-001"
     finally:
         db.close()
 

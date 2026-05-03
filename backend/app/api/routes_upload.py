@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.user import User
+from app.services.audit import write_audit_event
 from app.services.auth import require_roles
 from app.services.ingestion import ingest_fhir_bundle
 
@@ -34,6 +35,20 @@ async def upload_fhir_bundle(
     try:
         content_hash = hashlib.sha256(content).hexdigest()
         result = ingest_fhir_bundle(bundle, db, filename=file.filename, content_hash=content_hash)
+        write_audit_event(
+            db,
+            user=user,
+            action="fhir_bundle_uploaded",
+            resource_type="patient",
+            resource_id=str(result["patient_id"]),
+            metadata={
+                "filename": file.filename,
+                "content_hash": content_hash,
+                "patient_id": result["patient_id"],
+                "import_mode": result["import_mode"],
+                "resource_counts": result["resource_counts"],
+            },
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
