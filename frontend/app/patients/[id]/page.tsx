@@ -67,7 +67,7 @@ export default async function PatientDetailPage({
         },
       } satisfies PatientAiInsightsResponse;
 
-  const timeline = buildTimeline(patient);
+  const timeline = buildTimeline({...patient, encounters: []});
   const citationsById = new Map(insights.citations.map((citation) => [citation.id, citation]));
   const displayedAllergies = patient.allergies.slice(0, 3);
   const hiddenAllergyCount = Math.max(patient.allergies.length - displayedAllergies.length, 0);

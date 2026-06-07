@@ -221,7 +221,7 @@ def ingest_fhir_bundle(
             raw_record_id=medication.get("fhir_medication_request_id"),
         )
 
-    for allergy in parsed_data.get("allergies", []):
+    for allergy in parsed_data.get("allergy_intolerances", []):
         allergy_intolerance = AllergyIntolerance(
             patient_id=patient.id,
             fhir_allergy_id=allergy.get("fhir_allergy_id"),

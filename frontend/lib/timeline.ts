@@ -53,5 +53,5 @@ export function buildTimeline(patient: Patient): TimelineItem[] {
     })),
   ];
 
-  return items.sort((left, right) => right.date.localeCompare(left.date));
+  return items.sort((left, right) => left.date.localeCompare(right.date));
 }

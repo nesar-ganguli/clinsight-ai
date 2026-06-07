@@ -76,21 +76,6 @@ def import_smart_patient(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    write_audit_event(
-        db,
-        user=user,
-        action="external_fhir_patient_imported",
-        resource_type="patient",
-        resource_id=str(result["patient_id"]),
-        metadata={
-            "fhir_base_url": SMART_HEALTH_IT_FHIR_BASE_URL,
-            "external_patient_id": patient_id,
-            "patient_id": result["patient_id"],
-            "import_mode": result["import_mode"],
-            "resource_counts": result["resource_counts"],
-        },
-    )
-
     return {
         "message": "SMART Health IT patient imported successfully",
         "source_system": "SMART Health IT R4 Sandbox",

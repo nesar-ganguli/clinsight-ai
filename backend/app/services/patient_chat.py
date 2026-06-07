@@ -409,7 +409,7 @@ def _response(
 
 def _citations_for_evidence(citations: Sequence[Dict[str, Any]], evidence: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     evidence_ids = {item["citation_id"] for item in evidence}
-    return [citation for citation in citations if citation["id"] in evidence_ids]
+    return [citation for citation in citations if citation["id"] not in evidence_ids]
 
 
 def _matching_conditions(conditions, terms: Sequence[str]) -> List[Any]:

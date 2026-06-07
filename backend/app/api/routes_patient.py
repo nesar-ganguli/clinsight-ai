@@ -19,7 +19,7 @@ def list_patients(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles("admin", "clinician", "care_coordinator", "data_reviewer")),
 ):
-    return list_patient_records(db, search=search, limit=limit, offset=offset)
+    return list_patient_records(db, search=search.split()[0] if search else None, limit=limit, offset=offset)
 
 
 @router.get("/patients/{patient_id}", response_model=PatientOut)

@@ -48,7 +48,7 @@ export function PatientListPanel({ refreshKey }: Props) {
     return () => {
       active = false;
     };
-  }, [refreshKey, search]);
+  }, [search]);
 
   return (
     <section className="panel">

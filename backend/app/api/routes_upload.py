@@ -29,7 +29,7 @@ async def upload_fhir_bundle(
     except UnicodeDecodeError:
         raise HTTPException(status_code=400, detail="Could not decode file as UTF-8")
 
-    if bundle.get("resourceType") != "Bundle":
+    if bundle.get("resourceType") != "Bundle" or bundle.get("type") != "collection":
         raise HTTPException(status_code=400, detail="Uploaded JSON is not a FHIR Bundle")
 
     try:
