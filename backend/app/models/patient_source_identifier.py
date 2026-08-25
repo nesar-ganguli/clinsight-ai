@@ -9,9 +9,8 @@ class PatientSourceIdentifier(Base):
     __table_args__ = (
         UniqueConstraint(
             "source_system_id",
-            "identifier_type",
             "identifier_value",
-            name="uq_patient_source_identifiers_source_type_value"
+            name="uq_patient_source_identifiers_source_value"
         ),
     )
 

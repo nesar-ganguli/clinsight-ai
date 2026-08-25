@@ -7,7 +7,7 @@ class Patient(Base):
     __tablename__ = "patients"
 
     id = Column(Integer, primary_key=True, index=True)
-    fhir_patient_id = Column(String(255), unique=True, index=True, nullable=True)
+    fhir_patient_id = Column(String(255), index=True, nullable=True)
     full_name = Column(String(255), nullable=True, index=True)
     gender = Column(String(50), nullable=True)
     birth_date = Column(String(32), nullable=True)

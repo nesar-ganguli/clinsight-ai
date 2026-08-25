@@ -52,16 +52,13 @@ def ingest_fhir_bundle(
     db.add(ingestion_batch)
     db.flush()
 
-    patient = None
     import_mode = "created"
     fhir_patient_id = patient_payload.get("fhir_patient_id")
-
-    if fhir_patient_id:
-        patient = (
-            db.query(Patient)
-            .filter(Patient.fhir_patient_id == fhir_patient_id)
-            .first()
-        )
+    patient = _resolve_patient_by_source_identifier(
+        db,
+        source_system.id,
+        fhir_patient_id,
+    )
 
     if patient:
         import_mode = "updated"
@@ -101,7 +98,13 @@ def ingest_fhir_bundle(
         ingestion_batch.id,
         raw_record_id=fhir_patient_id,
     )
-    _upsert_patient_source_identifier(db, patient, source_system.id, ingestion_batch.id)
+    _upsert_patient_source_identifier(
+        db,
+        patient,
+        source_system.id,
+        ingestion_batch.id,
+        fhir_patient_id,
+    )
 
     for cond in parsed_data.get("conditions", []):
         _upsert_clinical_record(
@@ -309,21 +312,22 @@ def _upsert_patient_source_identifier(
     patient: Patient,
     source_system_id: int,
     ingestion_batch_id: int,
+    source_patient_id: Optional[str],
 ) -> None:
-    if not patient.fhir_patient_id:
+    if not source_patient_id:
         return
 
     identifier = (
         db.query(PatientSourceIdentifier)
         .filter(
             PatientSourceIdentifier.source_system_id == source_system_id,
-            PatientSourceIdentifier.identifier_type == "fhir_patient_id",
-            PatientSourceIdentifier.identifier_value == patient.fhir_patient_id,
+            PatientSourceIdentifier.identifier_value == source_patient_id,
         )
         .first()
     )
     if identifier:
-        identifier.patient_id = patient.id
+        if identifier.patient_id != patient.id:
+            raise ValueError("Source patient identifier is already mapped to another canonical patient")
         identifier.last_seen_batch_id = ingestion_batch_id
     else:
         db.add(
@@ -331,11 +335,33 @@ def _upsert_patient_source_identifier(
                 patient_id=patient.id,
                 source_system_id=source_system_id,
                 identifier_type="fhir_patient_id",
-                identifier_value=patient.fhir_patient_id,
+                identifier_value=source_patient_id,
                 assigning_authority="FHIR Bundle",
                 last_seen_batch_id=ingestion_batch_id,
             )
         )
+
+
+def _resolve_patient_by_source_identifier(
+    db: Session,
+    source_system_id: int,
+    source_patient_id: Optional[str],
+) -> Optional[Patient]:
+    if not source_patient_id:
+        return None
+
+    identifier = (
+        db.query(PatientSourceIdentifier)
+        .filter(
+            PatientSourceIdentifier.source_system_id == source_system_id,
+            PatientSourceIdentifier.identifier_value == source_patient_id,
+        )
+        .first()
+    )
+    if identifier is None:
+        return None
+
+    return db.query(Patient).filter(Patient.id == identifier.patient_id).first()
 
 
 def _upsert_clinical_record(

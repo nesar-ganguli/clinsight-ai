@@ -144,6 +144,8 @@ def test_uploading_same_bundle_twice_upserts_without_duplicates(client):
         assert second_record_ids == first_record_ids
         assert db.query(CuratedRecordSource).count() == sum(second_payload["resource_counts"].values())
         assert db.query(IngestionBatch).count() == 2
+        assert db.query(Patient).count() == 1
+        assert db.query(PatientSourceIdentifier).count() == 1
         latest_batch = db.query(IngestionBatch).order_by(IngestionBatch.id.desc()).first()
         assert {
             source.ingestion_batch_id
@@ -205,7 +207,7 @@ def test_same_source_updates_records_and_retains_omitted_resources(client):
     assert updated_observation["value"] == "142/88"
 
 
-def test_same_resource_ids_from_different_sources_coexist(client):
+def test_identical_patient_ids_from_different_sources_create_separate_canonical_patients(client):
     upload_bundle = load_sample_bundle()
     smart_bundle = load_sample_bundle()
     mark_as_smart_health_it_bundle(smart_bundle)
@@ -228,45 +230,131 @@ def test_same_resource_ids_from_different_sources_coexist(client):
         headers=auth_headers(client),
     )
     assert smart_response.status_code == 200
-    assert smart_response.json()["patient_id"] == upload_response.json()["patient_id"]
+    assert smart_response.json()["patient_id"] != upload_response.json()["patient_id"]
+    assert smart_response.json()["import_mode"] == "created"
+
+    upload_patient_response = client.get(
+        f"/api/patients/{upload_response.json()['patient_id']}",
+        headers=auth_headers(client, "clinician"),
+    )
+    smart_patient_response = client.get(
+        f"/api/patients/{smart_response.json()['patient_id']}",
+        headers=auth_headers(client, "clinician"),
+    )
+    assert upload_patient_response.status_code == 200
+    assert smart_patient_response.status_code == 200
+    upload_patient = upload_patient_response.json()
+    smart_patient = smart_patient_response.json()
+    assert len(upload_patient["conditions"]) == 2
+    assert len(smart_patient["conditions"]) == 2
+    assert {item["source_system"] for item in upload_patient["conditions"]} == {
+        "ClinSight FHIR Upload"
+    }
+    assert {item["source_system"] for item in smart_patient["conditions"]} == {
+        "SMART Health IT R4 Sandbox"
+    }
+    assert find_resource(upload_bundle, "Condition", "condition-001")["code"]["coding"][0]["display"] == (
+        next(item for item in upload_patient["conditions"] if item["fhir_condition_id"] == "condition-001")[
+            "condition_name"
+        ]
+    )
+    assert find_resource(smart_bundle, "Condition", "condition-001")["code"]["coding"][0]["display"] == (
+        next(item for item in smart_patient["conditions"] if item["fhir_condition_id"] == "condition-001")[
+            "condition_name"
+        ]
+    )
+
+    db = SessionLocal()
+    try:
+        identifiers = db.query(PatientSourceIdentifier).order_by(PatientSourceIdentifier.id).all()
+        assert db.query(Patient).count() == 2
+        assert len(identifiers) == 2
+        assert {identifier.identifier_value for identifier in identifiers} == {"patient-001"}
+        assert len({identifier.source_system_id for identifier in identifiers}) == 2
+        assert len({identifier.patient_id for identifier in identifiers}) == 2
+    finally:
+        db.close()
+
+
+def test_manually_mapped_source_identifiers_resolve_to_one_canonical_patient(client):
+    upload_bundle = load_sample_bundle()
+    smart_bundle = load_sample_bundle()
+    smart_patient = find_resource(smart_bundle, "Patient", "patient-001")
+    smart_patient["id"] = "smart-linked-001"
+    smart_patient["name"][0]["given"] = ["Jonathan"]
+    update_patient_reference(smart_bundle, "smart-linked-001")
+    mark_as_smart_health_it_bundle(smart_bundle)
+
+    upload_response = client.post(
+        "/api/upload",
+        files={"file": ("upload.json", json.dumps(upload_bundle), "application/json")},
+        headers=auth_headers(client),
+    )
+    assert upload_response.status_code == 200
+    canonical_patient_id = upload_response.json()["patient_id"]
+
+    db = SessionLocal()
+    try:
+        smart_source = SourceSystem(
+            name="SMART Health IT R4 Sandbox",
+            system_type="external_fhir_api",
+            facility_name="SMART Health IT public sandbox",
+            external_system_id="smart-health-it-r4-sandbox",
+            is_active=True,
+        )
+        db.add(smart_source)
+        db.flush()
+        db.add(
+            PatientSourceIdentifier(
+                patient_id=canonical_patient_id,
+                source_system_id=smart_source.id,
+                identifier_type="fhir_patient_id",
+                identifier_value="smart-linked-001",
+                assigning_authority="Manual identity mapping",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    smart_response = client.post(
+        "/api/upload",
+        files={"file": ("smart.json", json.dumps(smart_bundle), "application/json")},
+        headers=auth_headers(client),
+    )
+    assert smart_response.status_code == 200
+    assert smart_response.json()["patient_id"] == canonical_patient_id
+    assert smart_response.json()["import_mode"] == "updated"
 
     patient_response = client.get(
-        f"/api/patients/{upload_response.json()['patient_id']}",
+        f"/api/patients/{canonical_patient_id}",
         headers=auth_headers(client, "clinician"),
     )
     assert patient_response.status_code == 200
     patient_payload = patient_response.json()
+    assert patient_payload["full_name"] == "Jonathan Doe"
+    assert patient_payload["fhir_patient_id"] == "patient-001"
     assert len(patient_payload["conditions"]) == 4
-    assert len(patient_payload["observations"]) == 4
-    assert len(patient_payload["encounters"]) == 2
-    assert len(patient_payload["medication_requests"]) == 2
-    assert len(patient_payload["allergies"]) == 2
-
-    matching_conditions = [
-        item for item in patient_payload["conditions"] if item["fhir_condition_id"] == "condition-001"
-    ]
-    assert {item["source_system"] for item in matching_conditions} == {
+    assert {item["source_system"] for item in patient_payload["conditions"]} == {
         "ClinSight FHIR Upload",
         "SMART Health IT R4 Sandbox",
-    }
-    assert {item["condition_name"] for item in matching_conditions} == {
-        "Upload hypertension",
-        "SMART hypertension",
     }
 
     db = SessionLocal()
     try:
-        condition_ids = {item["id"] for item in matching_conditions}
-        condition_sources = (
-            db.query(CuratedRecordSource)
-            .filter(
-                CuratedRecordSource.curated_table_name == "conditions",
-                CuratedRecordSource.curated_record_id.in_(condition_ids),
-            )
+        identifiers = (
+            db.query(PatientSourceIdentifier)
+            .filter(PatientSourceIdentifier.patient_id == canonical_patient_id)
+            .order_by(PatientSourceIdentifier.id)
             .all()
         )
-        assert len(condition_sources) == 2
-        assert len({source.source_system_id for source in condition_sources}) == 2
+        assert db.query(Patient).count() == 1
+        assert len(identifiers) == 2
+        assert {identifier.identifier_value for identifier in identifiers} == {
+            "patient-001",
+            "smart-linked-001",
+        }
+        assert len({identifier.source_system_id for identifier in identifiers}) == 2
     finally:
         db.close()
 

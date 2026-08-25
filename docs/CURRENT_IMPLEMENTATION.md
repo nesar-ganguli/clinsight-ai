@@ -1,6 +1,6 @@
 # ClinSight AI: Current Implementation
 
-> Status snapshot: 2026-08-25, after incremental-plan Change 1 (source-aware FHIR resource upserts).
+> Status snapshot: 2026-08-25, after incremental-plan Change 2 (canonical/source-aware patient identity).
 >
 > This document describes what the repository implements today. It is based on the application source, Alembic migrations, dbt models, scripts, frontend, and tests. It intentionally distinguishes implemented behavior from product intent and production-ready behavior.
 
@@ -12,16 +12,17 @@ ClinSight AI is a working full-stack clinical chart-review demo with three conne
 2. A separate synthetic hospital pipeline generates operational `raw_*` data, transforms it with dbt into app-shaped clinical views, and can export those views back into uploadable FHIR Bundles.
 3. A Next.js application provides role-aware workflows for FHIR ingestion, patient search, longitudinal review, quality checks, rule-grounded insights, chart Q&A, source provenance, and audit review.
 
-The repository is beyond a simple upload demo: it has migrations, two clinical read paths, four demo RBAC roles, provenance tables, audit events, external SMART Health IT sandbox import, deterministic clinical rules, optional LLM-assisted chart Q&A, Docker orchestration, repeatable synthetic data, and 30 passing backend tests.
+The repository is beyond a simple upload demo: it has migrations, two clinical read paths, four demo RBAC roles, provenance tables, audit events, external SMART Health IT sandbox import, deterministic clinical rules, optional LLM-assisted chart Q&A, Docker orchestration, repeatable synthetic data, and 31 passing backend tests.
 
-It is still a demo/reference implementation rather than a production clinical system. Authentication uses locally created demo accounts and a shared password; FHIR support is intentionally narrow; patient identity reconciliation remains source-agnostic even though child-resource upserts are now source-safe; the AI safety checks are lightweight; and there is no production security, observability, deployment, or compliance layer.
+It is still a demo/reference implementation rather than a production clinical system. Authentication uses locally created demo accounts and a shared password; FHIR support is intentionally narrow; patient identity is source-aware but only explicitly mapped rather than probabilistically reconciled; the AI safety checks are lightweight; and there is no production security, observability, deployment, or compliance layer.
 
 ## Incremental change-plan status
 
 | Change | Status | Current result |
 | --- | --- | --- |
 | 1. Source-aware FHIR resource upserts | Complete and verified | Child records are inserted or updated by patient, source system, and FHIR resource ID. Omitted records are retained and records from different sources coexist. |
-| 2–8 | Not implemented | Canonical identity, typed clinical dates, Airflow, durable failures, quarantine, SQL pagination, and pipeline observability remain future work. |
+| 2. Canonical/source-aware patient identity | Complete and verified | `patient_source_identifiers` is authoritative for ingestion lookup. Identical patient IDs from different sources remain separate unless explicitly mapped to one canonical patient. |
+| 3–8 | Not implemented | Typed clinical dates, Airflow, durable failures, quarantine, SQL pagination, and pipeline observability remain future work. |
 
 ## System shape
 
@@ -64,16 +65,16 @@ The API deliberately hides this distinction from most callers through [`clinical
 | [`backend/app/api`](../backend/app/api) | HTTP endpoints and role dependencies. |
 | [`backend/app/services`](../backend/app/services) | FHIR parsing/ingestion, unified clinical reads, quality rules, insights, chat, authentication, audit, and SMART client. |
 | [`backend/app/models`](../backend/app/models) | SQLAlchemy mappings for clinical, provenance, raw, staging, user, and audit tables. |
-| [`backend/alembic/versions`](../backend/alembic/versions) | Eight migrations representing the complete database evolution. |
+| [`backend/alembic/versions`](../backend/alembic/versions) | Nine migrations representing the complete database evolution. |
 | [`backend/scripts`](../backend/scripts) | Demo seeding, metrics, synthetic hospital generation, and FHIR export. |
-| [`backend/tests`](../backend/tests) | 30 backend unit/API tests, using SQLite and mocked external services. |
+| [`backend/tests`](../backend/tests) | 31 backend unit/API tests, using SQLite and mocked external services. |
 | [`dbt/models/staging`](../dbt/models/staging) | Eight cleaning/normalization views over operational raw tables. |
 | [`dbt/models/marts/clinical`](../dbt/models/marts/clinical) | Six clinical views matching the API's patient record concepts. |
 | [`frontend/app`](../frontend/app) | Next.js App Router pages for workspace, login, patient detail, and audit logs. |
 | [`frontend/components`](../frontend/components) | Client-side upload, search, external import, demo-role, and chart-chat panels. |
 | [`docker-compose.yml`](../docker-compose.yml) | PostgreSQL, backend, frontend, and opt-in pipeline/test/seed/metrics services. |
 
-Approximate source size at this snapshot is 4,457 backend application lines, 1,110 backend script lines, 1,405 backend test lines, 2,442 frontend TypeScript/TSX/CSS lines, and 952 dbt model/macro/documentation lines. Generated build and dbt artifacts are excluded.
+Approximate source size at this snapshot is 4,482 backend application lines, 1,110 backend script lines, 1,493 backend test lines, 2,442 frontend TypeScript/TSX/CSS lines, and 952 dbt model/macro/documentation lines. Generated build and dbt artifacts are excluded.
 
 ## Runtime and configuration
 
@@ -124,7 +125,7 @@ patients
   └── allergy_intolerances
 ```
 
-Every child has an integer database ID, a `patient_id` foreign key with cascade deletion, an optional FHIR resource ID, normalized clinical fields, source metadata, and created/updated timestamps. Each child table has a source-aware uniqueness constraint on `(patient_id, source_system, fhir_resource_id)`. `patients.fhir_patient_id` remains globally unique pending the canonical identity change.
+Every child has an integer database ID, a `patient_id` foreign key with cascade deletion, an optional FHIR resource ID, normalized clinical fields, source metadata, and created/updated timestamps. Each child table has a source-aware uniqueness constraint on `(patient_id, source_system, fhir_resource_id)`. `patients.fhir_patient_id` remains as a legacy/display field but is no longer globally unique or used for ingestion resolution.
 
 The six concepts retain only the fields used by this product:
 
@@ -145,10 +146,12 @@ The active FHIR ingestion path uses:
 
 - `source_systems`: a reusable source definition.
 - `ingestion_batches`: one row per accepted bundle, including filename, hash, status, record count, and timestamps.
-- `patient_source_identifiers`: maps a source-specific FHIR patient ID to the application patient.
+- `patient_source_identifiers`: authoritatively maps a source-specific patient identifier to the canonical application patient. `(source_system_id, identifier_value)` is unique; `identifier_type` remains descriptive.
 - `curated_record_sources`: maps each application clinical row to its source system, latest ingestion batch for that source/record pair, raw/FHIR record ID, and transform version.
 
 Source metadata is also denormalized directly onto every clinical record as `source_type`, `source_system`, `source_record_id`, `ingestion_batch_id`, and `transformed_at`, which lets API responses and citations expose provenance without joining lineage tables.
+
+Migration `0009_canonical_patient_identity` removes the global uniqueness constraint from `patients.fhir_patient_id`, changes the source-identifier constraint to `(source_system_id, identifier_value)`, and backfills a source mapping for an existing patient when `patients.source_system` matches a `source_systems.name`. Existing rows without a matching source-system definition are left unchanged rather than guessed.
 
 Three FHIR sources are recognized from bundle metadata:
 
@@ -202,15 +205,15 @@ This is structural extraction, not full FHIR profile validation, terminology val
 1. Parse the Bundle and require a Patient.
 2. Resolve/create the source system.
 3. create a processed ingestion-batch row with content hash and total resource count.
-4. Find the application patient by globally unique `fhir_patient_id`.
-5. Create the patient or update its demographics; patient lookup is still by global `fhir_patient_id`.
+4. Look up `(source_system_id, incoming FHIR patient ID)` in `patient_source_identifiers`.
+5. Load the mapped canonical patient, or create a new patient and source-identifier mapping when no mapping exists. No name/DOB or fuzzy matching is attempted.
 6. For every supported child with a FHIR ID, find a row by `(patient_id, source_system, fhir_resource_id)` and update it, or insert it when absent. Resources without a FHIR ID are inserted because no stable source key is available.
 7. Upsert per-source lineage to the latest ingestion batch and upsert the source-specific patient identifier.
 8. Commit once and return patient ID, `created`/`updated`, and resource counts.
 
 Repeated delivery of the same source Bundle is idempotent at the identified child-record level. Changed incoming fields update the existing record and lineage batch, while a child omitted from a later Bundle is retained. No deletion or tombstone semantics are implemented yet.
 
-Identical child FHIR IDs from two recognized source systems can coexist under the currently resolved patient, and an update from one source no longer overwrites the other source's child record. Patient resolution itself is not source-aware yet: two systems presenting the same patient FHIR ID still resolve to the same global `patients` row, whose demographics and denormalized patient-level source metadata reflect the latest import. Canonical/source-specific patient identity is Change 2.
+Two systems presenting the same FHIR patient ID now create separate canonical patients because the source system is part of the authoritative mapping. Multiple source identifiers can converge on one canonical patient only when a mapping is explicitly configured. When they do converge, source-aware child records coexist, while canonical patient demographics and denormalized patient-level source metadata reflect the latest import. The legacy `patients.fhir_patient_id` retains the value assigned when that canonical patient was created.
 
 If parsing or persistence fails, the transaction rolls back. Because the batch row is part of the same transaction, failed attempts are not retained as failed `ingestion_batches` records.
 
@@ -414,8 +417,9 @@ The timeline merges all five child resource types and sorts lexically by their s
 
 At this snapshot:
 
-- `backend/.venv/bin/python -m pytest -q`: **30 passed**.
-- Alembic `upgrade -> downgrade 0007 -> upgrade` on SQLite: **successful**, ending at `0008_source_aware_fhir_keys`.
+- `backend/.venv/bin/python -m pytest -q`: **31 passed**.
+- Alembic `upgrade -> downgrade 0008 -> upgrade` on SQLite: **successful**, ending at `0009_canonical_patient_identity`.
+- A seeded revision-0008 patient upgraded to `0009` with its source identifier backfilled; a second source then stored the same FHIR patient ID as a separate patient and mapping: **successful**.
 - `npm run build`: **successful**, including TypeScript validation and production compilation.
 
 Backend coverage includes:
@@ -424,6 +428,9 @@ Backend coverage includes:
 - exact Bundle re-upload without duplicate child records;
 - same-source field updates while omitted child records remain;
 - coexistence and lineage for identical resource IDs from different sources;
+- same-source patient IDs resolving to one canonical patient;
+- identical patient IDs from different sources resolving to separate canonical patients;
+- explicit multi-source identifiers resolving to one manually mapped canonical patient;
 - source systems, ingestion batches, patient identifiers, and curated lineage;
 - quality rules and grounded insight evaluation;
 - deterministic chat, treatment refusal, mocked GitHub Models use, and chat audit;
@@ -446,7 +453,7 @@ Important test boundaries:
 The most important engineering gaps, in priority order, are:
 
 1. **Production security is not implemented.** Demo users, shared credentials, a default signing secret, readable browser token storage, and no token revocation are intentionally non-production.
-2. **Patient identity is still globally keyed.** Child upserts are source-aware, but a globally matched FHIR patient ID still maps different sources to one patient and lets the latest import replace patient demographics/source metadata; uploaded and dbt patients otherwise remain separate identities.
+2. **Patient reconciliation is explicit only.** Source-specific identity is implemented, but there is no API/workflow for managing mappings and no deterministic or probabilistic matching across source identifiers. Uploaded and dbt patients also remain separate identity domains.
 3. **FHIR conformance is narrow.** There is no schema/profile validation, reference enforcement, terminology service, paging loop, or broad datatype support.
 4. **The dormant and active raw/staging designs overlap.** `raw_hospital_*`/ORM staging tables remain in migrations while the live pipeline uses `raw_*` and dbt views.
 5. **dbt batch semantics can mix child history.** Latest patient demographics and all-batch child marts use different selection rules.
