@@ -7,7 +7,12 @@ from app.core.database import Base
 class Encounter(Base):
     __tablename__ = "encounters"
     __table_args__ = (
-        UniqueConstraint("patient_id", "fhir_encounter_id", name="uq_encounters_patient_fhir_encounter_id"),
+        UniqueConstraint(
+            "patient_id",
+            "source_system",
+            "fhir_encounter_id",
+            name="uq_encounters_patient_source_fhir_encounter_id",
+        ),
     )
 
     id = Column(Integer, primary_key=True, index=True)

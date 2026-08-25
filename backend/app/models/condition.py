@@ -6,7 +6,12 @@ from app.core.database import Base
 class Condition(Base):
     __tablename__ = "conditions"
     __table_args__ = (
-        UniqueConstraint("patient_id", "fhir_condition_id", name="uq_conditions_patient_fhir_condition_id"),
+        UniqueConstraint(
+            "patient_id",
+            "source_system",
+            "fhir_condition_id",
+            name="uq_conditions_patient_source_fhir_condition_id",
+        ),
     )
 
     id = Column(Integer, primary_key=True, index=True)

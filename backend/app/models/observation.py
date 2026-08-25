@@ -6,7 +6,12 @@ from app.core.database import Base
 class Observation(Base):
     __tablename__ = "observations"
     __table_args__ = (
-        UniqueConstraint("patient_id", "fhir_observation_id", name="uq_observations_patient_fhir_observation_id"),
+        UniqueConstraint(
+            "patient_id",
+            "source_system",
+            "fhir_observation_id",
+            name="uq_observations_patient_source_fhir_observation_id",
+        ),
     )
 
     id = Column(Integer, primary_key=True, index=True)

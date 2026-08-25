@@ -9,8 +9,9 @@ class AllergyIntolerance(Base):
     __table_args__ = (
         UniqueConstraint(
             "patient_id",
+            "source_system",
             "fhir_allergy_id",
-            name="uq_allergy_intolerances_patient_fhir_allergy_id"
+            name="uq_allergy_intolerances_patient_source_fhir_allergy_id"
         ),
     )
 

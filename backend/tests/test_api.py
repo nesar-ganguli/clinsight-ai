@@ -5,8 +5,13 @@ from sqlalchemy import text
 
 from app.core.database import SessionLocal
 from app.models.audit_log import AuditLog
+from app.models.allergy_intolerance import AllergyIntolerance
+from app.models.condition import Condition
 from app.models.curated_record_source import CuratedRecordSource
+from app.models.encounter import Encounter
 from app.models.ingestion_batch import IngestionBatch
+from app.models.medication_request import MedicationRequest
+from app.models.observation import Observation
 from app.models.patient import Patient
 from app.models.patient_source_identifier import PatientSourceIdentifier
 from app.models.source_system import SourceSystem
@@ -26,6 +31,28 @@ def update_patient_reference(bundle, patient_id):
             resource["subject"]["reference"] = f"Patient/{patient_id}"
         elif resource["resourceType"] == "AllergyIntolerance":
             resource["patient"]["reference"] = f"Patient/{patient_id}"
+
+
+def find_resource(bundle, resource_type, resource_id):
+    return next(
+        entry["resource"]
+        for entry in bundle["entry"]
+        if entry["resource"].get("resourceType") == resource_type
+        and entry["resource"].get("id") == resource_id
+    )
+
+
+def mark_as_smart_health_it_bundle(bundle):
+    bundle["meta"] = {
+        "source": "smart-health-it-r4-sandbox",
+        "tag": [
+            {
+                "system": "https://clinsight.ai/source-type",
+                "code": "smart-health-it-r4-sandbox",
+                "display": "SMART Health IT R4 Sandbox",
+            }
+        ],
+    }
 
 
 def auth_headers(client, username="admin"):
@@ -71,7 +98,7 @@ def test_upload_bundle_creates_patient_record(client):
     assert len(patient_payload["allergies"]) == 1
 
 
-def test_upload_bundle_is_idempotent_for_same_fhir_patient(client):
+def test_uploading_same_bundle_twice_upserts_without_duplicates(client):
     bundle = load_sample_bundle()
 
     first_response = client.post(
@@ -82,8 +109,17 @@ def test_upload_bundle_is_idempotent_for_same_fhir_patient(client):
     assert first_response.status_code == 200
     first_payload = first_response.json()
 
-    bundle["entry"][0]["resource"]["name"][0]["given"] = ["Jane"]
-    bundle["entry"] = bundle["entry"][:-1]
+    db = SessionLocal()
+    try:
+        first_record_ids = {
+            "conditions": [record.id for record in db.query(Condition).order_by(Condition.id)],
+            "observations": [record.id for record in db.query(Observation).order_by(Observation.id)],
+            "encounters": [record.id for record in db.query(Encounter).order_by(Encounter.id)],
+            "medications": [record.id for record in db.query(MedicationRequest).order_by(MedicationRequest.id)],
+            "allergies": [record.id for record in db.query(AllergyIntolerance).order_by(AllergyIntolerance.id)],
+        }
+    finally:
+        db.close()
 
     second_response = client.post(
         "/api/upload",
@@ -96,7 +132,60 @@ def test_upload_bundle_is_idempotent_for_same_fhir_patient(client):
     assert second_payload["patient_id"] == first_payload["patient_id"]
     assert second_payload["import_mode"] == "updated"
 
-    patient_response = client.get(f"/api/patients/{first_payload['patient_id']}", headers=auth_headers(client, "clinician"))
+    db = SessionLocal()
+    try:
+        second_record_ids = {
+            "conditions": [record.id for record in db.query(Condition).order_by(Condition.id)],
+            "observations": [record.id for record in db.query(Observation).order_by(Observation.id)],
+            "encounters": [record.id for record in db.query(Encounter).order_by(Encounter.id)],
+            "medications": [record.id for record in db.query(MedicationRequest).order_by(MedicationRequest.id)],
+            "allergies": [record.id for record in db.query(AllergyIntolerance).order_by(AllergyIntolerance.id)],
+        }
+        assert second_record_ids == first_record_ids
+        assert db.query(CuratedRecordSource).count() == sum(second_payload["resource_counts"].values())
+        assert db.query(IngestionBatch).count() == 2
+        latest_batch = db.query(IngestionBatch).order_by(IngestionBatch.id.desc()).first()
+        assert {
+            source.ingestion_batch_id
+            for source in db.query(CuratedRecordSource).all()
+        } == {latest_batch.id}
+    finally:
+        db.close()
+
+
+def test_same_source_updates_records_and_retains_omitted_resources(client):
+    bundle = load_sample_bundle()
+
+    first_response = client.post(
+        "/api/upload",
+        files={"file": ("patient_bundle_1.json", json.dumps(bundle), "application/json")},
+        headers=auth_headers(client),
+    )
+    assert first_response.status_code == 200
+    patient_id = first_response.json()["patient_id"]
+
+    bundle["entry"][0]["resource"]["name"][0]["given"] = ["Jane"]
+    condition = find_resource(bundle, "Condition", "condition-001")
+    condition["code"]["coding"][0]["display"] = "Updated hypertension"
+    condition["clinicalStatus"]["coding"][0]["code"] = "resolved"
+    observation = find_resource(bundle, "Observation", "observation-001")
+    observation["valueString"] = "142/88"
+    bundle["entry"] = [
+        entry
+        for entry in bundle["entry"]
+        if entry["resource"].get("resourceType") != "AllergyIntolerance"
+    ]
+
+    second_response = client.post(
+        "/api/upload",
+        files={"file": ("patient_bundle_1.json", json.dumps(bundle), "application/json")},
+        headers=auth_headers(client),
+    )
+    assert second_response.status_code == 200
+    assert second_response.json()["patient_id"] == patient_id
+
+    patient_response = client.get(f"/api/patients/{patient_id}", headers=auth_headers(client, "clinician"))
+    assert patient_response.status_code == 200
     patient_payload = patient_response.json()
 
     assert patient_payload["full_name"] == "Jane Doe"
@@ -104,7 +193,82 @@ def test_upload_bundle_is_idempotent_for_same_fhir_patient(client):
     assert len(patient_payload["observations"]) == 2
     assert len(patient_payload["encounters"]) == 1
     assert len(patient_payload["medication_requests"]) == 1
-    assert len(patient_payload["allergies"]) == 0
+    assert len(patient_payload["allergies"]) == 1
+    updated_condition = next(
+        item for item in patient_payload["conditions"] if item["fhir_condition_id"] == "condition-001"
+    )
+    updated_observation = next(
+        item for item in patient_payload["observations"] if item["fhir_observation_id"] == "observation-001"
+    )
+    assert updated_condition["condition_name"] == "Updated hypertension"
+    assert updated_condition["clinical_status"] == "resolved"
+    assert updated_observation["value"] == "142/88"
+
+
+def test_same_resource_ids_from_different_sources_coexist(client):
+    upload_bundle = load_sample_bundle()
+    smart_bundle = load_sample_bundle()
+    mark_as_smart_health_it_bundle(smart_bundle)
+
+    upload_condition = find_resource(upload_bundle, "Condition", "condition-001")
+    upload_condition["code"]["coding"][0]["display"] = "Upload hypertension"
+    smart_condition = find_resource(smart_bundle, "Condition", "condition-001")
+    smart_condition["code"]["coding"][0]["display"] = "SMART hypertension"
+
+    upload_response = client.post(
+        "/api/upload",
+        files={"file": ("upload.json", json.dumps(upload_bundle), "application/json")},
+        headers=auth_headers(client),
+    )
+    assert upload_response.status_code == 200
+
+    smart_response = client.post(
+        "/api/upload",
+        files={"file": ("smart.json", json.dumps(smart_bundle), "application/json")},
+        headers=auth_headers(client),
+    )
+    assert smart_response.status_code == 200
+    assert smart_response.json()["patient_id"] == upload_response.json()["patient_id"]
+
+    patient_response = client.get(
+        f"/api/patients/{upload_response.json()['patient_id']}",
+        headers=auth_headers(client, "clinician"),
+    )
+    assert patient_response.status_code == 200
+    patient_payload = patient_response.json()
+    assert len(patient_payload["conditions"]) == 4
+    assert len(patient_payload["observations"]) == 4
+    assert len(patient_payload["encounters"]) == 2
+    assert len(patient_payload["medication_requests"]) == 2
+    assert len(patient_payload["allergies"]) == 2
+
+    matching_conditions = [
+        item for item in patient_payload["conditions"] if item["fhir_condition_id"] == "condition-001"
+    ]
+    assert {item["source_system"] for item in matching_conditions} == {
+        "ClinSight FHIR Upload",
+        "SMART Health IT R4 Sandbox",
+    }
+    assert {item["condition_name"] for item in matching_conditions} == {
+        "Upload hypertension",
+        "SMART hypertension",
+    }
+
+    db = SessionLocal()
+    try:
+        condition_ids = {item["id"] for item in matching_conditions}
+        condition_sources = (
+            db.query(CuratedRecordSource)
+            .filter(
+                CuratedRecordSource.curated_table_name == "conditions",
+                CuratedRecordSource.curated_record_id.in_(condition_ids),
+            )
+            .all()
+        )
+        assert len(condition_sources) == 2
+        assert len({source.source_system_id for source in condition_sources}) == 2
+    finally:
+        db.close()
 
 
 def test_upload_bundle_records_multisource_ingestion_metadata(client):

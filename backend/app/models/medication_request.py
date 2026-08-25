@@ -9,8 +9,9 @@ class MedicationRequest(Base):
     __table_args__ = (
         UniqueConstraint(
             "patient_id",
+            "source_system",
             "fhir_medication_request_id",
-            name="uq_medication_requests_patient_fhir_medication_request_id"
+            name="uq_med_requests_patient_source_fhir_id"
         ),
     )
 

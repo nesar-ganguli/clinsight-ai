@@ -1,7 +1,7 @@
 import hashlib
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Optional, Type
 
 from sqlalchemy.orm import Session
 
@@ -65,8 +65,6 @@ def ingest_fhir_bundle(
 
     if patient:
         import_mode = "updated"
-        _delete_existing_curated_source_rows(db, patient, source_system.id)
-
         patient.full_name = patient_payload.get("full_name")
         patient.gender = patient_payload.get("gender")
         patient.birth_date = patient_payload.get("birth_date")
@@ -78,11 +76,6 @@ def ingest_fhir_bundle(
             transformed_at,
         )
 
-        db.query(AllergyIntolerance).filter(AllergyIntolerance.patient_id == patient.id).delete()
-        db.query(Condition).filter(Condition.patient_id == patient.id).delete()
-        db.query(Encounter).filter(Encounter.patient_id == patient.id).delete()
-        db.query(MedicationRequest).filter(MedicationRequest.patient_id == patient.id).delete()
-        db.query(Observation).filter(Observation.patient_id == patient.id).delete()
     else:
         patient = Patient(
             fhir_patient_id=fhir_patient_id,
@@ -100,7 +93,7 @@ def ingest_fhir_bundle(
         db.add(patient)
         db.flush()
 
-    _add_curated_source(
+    _upsert_curated_source(
         db,
         "patients",
         patient.id,
@@ -111,143 +104,103 @@ def ingest_fhir_bundle(
     _upsert_patient_source_identifier(db, patient, source_system.id, ingestion_batch.id)
 
     for cond in parsed_data.get("conditions", []):
-        condition = Condition(
-            patient_id=patient.id,
-            fhir_condition_id=cond.get("fhir_condition_id"),
-            condition_code=cond.get("condition_code"),
-            condition_name=cond.get("condition_name"),
-            clinical_status=cond.get("clinical_status"),
-            onset_date=cond.get("onset_date")
-        )
-        _apply_source_metadata(
-            condition,
-            source_system,
-            ingestion_batch.id,
-            cond.get("fhir_condition_id"),
-            transformed_at,
-        )
-        db.add(condition)
-        db.flush()
-        _add_curated_source(
+        _upsert_clinical_record(
             db,
-            "conditions",
-            condition.id,
-            source_system.id,
-            ingestion_batch.id,
-            raw_record_id=cond.get("fhir_condition_id"),
+            model=Condition,
+            patient=patient,
+            source_system=source_system,
+            ingestion_batch=ingestion_batch,
+            transformed_at=transformed_at,
+            curated_table_name="conditions",
+            fhir_id_attribute="fhir_condition_id",
+            fhir_resource_id=cond.get("fhir_condition_id"),
+            values={
+                "condition_code": cond.get("condition_code"),
+                "condition_name": cond.get("condition_name"),
+                "clinical_status": cond.get("clinical_status"),
+                "onset_date": cond.get("onset_date"),
+            },
         )
 
     for obs in parsed_data.get("observations", []):
-        observation = Observation(
-            patient_id=patient.id,
-            fhir_observation_id=obs.get("fhir_observation_id"),
-            observation_code=obs.get("observation_code"),
-            observation_name=obs.get("observation_name"),
-            value=obs.get("value"),
-            unit=obs.get("unit"),
-            effective_date=obs.get("effective_date")
-        )
-        _apply_source_metadata(
-            observation,
-            source_system,
-            ingestion_batch.id,
-            obs.get("fhir_observation_id"),
-            transformed_at,
-        )
-        db.add(observation)
-        db.flush()
-        _add_curated_source(
+        _upsert_clinical_record(
             db,
-            "observations",
-            observation.id,
-            source_system.id,
-            ingestion_batch.id,
-            raw_record_id=obs.get("fhir_observation_id"),
+            model=Observation,
+            patient=patient,
+            source_system=source_system,
+            ingestion_batch=ingestion_batch,
+            transformed_at=transformed_at,
+            curated_table_name="observations",
+            fhir_id_attribute="fhir_observation_id",
+            fhir_resource_id=obs.get("fhir_observation_id"),
+            values={
+                "observation_code": obs.get("observation_code"),
+                "observation_name": obs.get("observation_name"),
+                "value": obs.get("value"),
+                "unit": obs.get("unit"),
+                "effective_date": obs.get("effective_date"),
+            },
         )
 
     for encounter in parsed_data.get("encounters", []):
-        encounter_record = Encounter(
-            patient_id=patient.id,
-            fhir_encounter_id=encounter.get("fhir_encounter_id"),
-            status=encounter.get("status"),
-            encounter_class=encounter.get("encounter_class"),
-            encounter_type=encounter.get("encounter_type"),
-            period_start=encounter.get("period_start"),
-            period_end=encounter.get("period_end")
-        )
-        _apply_source_metadata(
-            encounter_record,
-            source_system,
-            ingestion_batch.id,
-            encounter.get("fhir_encounter_id"),
-            transformed_at,
-        )
-        db.add(encounter_record)
-        db.flush()
-        _add_curated_source(
+        _upsert_clinical_record(
             db,
-            "encounters",
-            encounter_record.id,
-            source_system.id,
-            ingestion_batch.id,
-            raw_record_id=encounter.get("fhir_encounter_id"),
+            model=Encounter,
+            patient=patient,
+            source_system=source_system,
+            ingestion_batch=ingestion_batch,
+            transformed_at=transformed_at,
+            curated_table_name="encounters",
+            fhir_id_attribute="fhir_encounter_id",
+            fhir_resource_id=encounter.get("fhir_encounter_id"),
+            values={
+                "status": encounter.get("status"),
+                "encounter_class": encounter.get("encounter_class"),
+                "encounter_type": encounter.get("encounter_type"),
+                "period_start": encounter.get("period_start"),
+                "period_end": encounter.get("period_end"),
+            },
         )
 
     for medication in parsed_data.get("medication_requests", []):
-        medication_request = MedicationRequest(
-            patient_id=patient.id,
-            fhir_medication_request_id=medication.get("fhir_medication_request_id"),
-            status=medication.get("status"),
-            intent=medication.get("intent"),
-            medication_code=medication.get("medication_code"),
-            medication_name=medication.get("medication_name"),
-            authored_on=medication.get("authored_on")
-        )
-        _apply_source_metadata(
-            medication_request,
-            source_system,
-            ingestion_batch.id,
-            medication.get("fhir_medication_request_id"),
-            transformed_at,
-        )
-        db.add(medication_request)
-        db.flush()
-        _add_curated_source(
+        _upsert_clinical_record(
             db,
-            "medication_requests",
-            medication_request.id,
-            source_system.id,
-            ingestion_batch.id,
-            raw_record_id=medication.get("fhir_medication_request_id"),
+            model=MedicationRequest,
+            patient=patient,
+            source_system=source_system,
+            ingestion_batch=ingestion_batch,
+            transformed_at=transformed_at,
+            curated_table_name="medication_requests",
+            fhir_id_attribute="fhir_medication_request_id",
+            fhir_resource_id=medication.get("fhir_medication_request_id"),
+            values={
+                "status": medication.get("status"),
+                "intent": medication.get("intent"),
+                "medication_code": medication.get("medication_code"),
+                "medication_name": medication.get("medication_name"),
+                "authored_on": medication.get("authored_on"),
+            },
         )
 
     for allergy in parsed_data.get("allergies", []):
-        allergy_intolerance = AllergyIntolerance(
-            patient_id=patient.id,
-            fhir_allergy_id=allergy.get("fhir_allergy_id"),
-            clinical_status=allergy.get("clinical_status"),
-            verification_status=allergy.get("verification_status"),
-            allergy_code=allergy.get("allergy_code"),
-            allergy_name=allergy.get("allergy_name"),
-            criticality=allergy.get("criticality"),
-            recorded_date=allergy.get("recorded_date")
-        )
-        _apply_source_metadata(
-            allergy_intolerance,
-            source_system,
-            ingestion_batch.id,
-            allergy.get("fhir_allergy_id"),
-            transformed_at,
-        )
-        db.add(allergy_intolerance)
-        db.flush()
-        _add_curated_source(
+        _upsert_clinical_record(
             db,
-            "allergy_intolerances",
-            allergy_intolerance.id,
-            source_system.id,
-            ingestion_batch.id,
-            raw_record_id=allergy.get("fhir_allergy_id"),
+            model=AllergyIntolerance,
+            patient=patient,
+            source_system=source_system,
+            ingestion_batch=ingestion_batch,
+            transformed_at=transformed_at,
+            curated_table_name="allergy_intolerances",
+            fhir_id_attribute="fhir_allergy_id",
+            fhir_resource_id=allergy.get("fhir_allergy_id"),
+            values={
+                "clinical_status": allergy.get("clinical_status"),
+                "verification_status": allergy.get("verification_status"),
+                "allergy_code": allergy.get("allergy_code"),
+                "allergy_name": allergy.get("allergy_name"),
+                "criticality": allergy.get("criticality"),
+                "recorded_date": allergy.get("recorded_date"),
+            },
         )
 
     db.commit()
@@ -385,38 +338,60 @@ def _upsert_patient_source_identifier(
         )
 
 
-def _delete_existing_curated_source_rows(db: Session, patient: Patient, source_system_id: int) -> None:
-    records = _patient_curated_records(patient)
-    for table_name, record_ids in records:
-        if not record_ids:
-            continue
-        (
-            db.query(CuratedRecordSource)
+def _upsert_clinical_record(
+    db: Session,
+    model: Type[Any],
+    patient: Patient,
+    source_system: SourceSystem,
+    ingestion_batch: IngestionBatch,
+    transformed_at: datetime,
+    curated_table_name: str,
+    fhir_id_attribute: str,
+    fhir_resource_id: Optional[str],
+    values: Dict[str, Any],
+) -> Any:
+    record = None
+    if fhir_resource_id:
+        record = (
+            db.query(model)
             .filter(
-                CuratedRecordSource.source_system_id == source_system_id,
-                CuratedRecordSource.curated_table_name == table_name,
-                CuratedRecordSource.curated_record_id.in_(record_ids),
+                model.patient_id == patient.id,
+                model.source_system == source_system.name,
+                getattr(model, fhir_id_attribute) == fhir_resource_id,
             )
-            .delete(synchronize_session=False)
+            .first()
         )
 
+    if record is None:
+        record = model(
+            patient_id=patient.id,
+            **{fhir_id_attribute: fhir_resource_id},
+        )
+        db.add(record)
 
-def _patient_curated_records(patient: Patient) -> List[Tuple[str, List[int]]]:
-    return [
-        ("patients", [patient.id]),
-        ("conditions", _ids(patient.conditions)),
-        ("observations", _ids(patient.observations)),
-        ("encounters", _ids(patient.encounters)),
-        ("medication_requests", _ids(patient.medication_requests)),
-        ("allergy_intolerances", _ids(patient.allergies)),
-    ]
+    for attribute, value in values.items():
+        setattr(record, attribute, value)
+
+    _apply_source_metadata(
+        record,
+        source_system,
+        ingestion_batch.id,
+        fhir_resource_id,
+        transformed_at,
+    )
+    db.flush()
+    _upsert_curated_source(
+        db,
+        curated_table_name,
+        record.id,
+        source_system.id,
+        ingestion_batch.id,
+        raw_record_id=fhir_resource_id,
+    )
+    return record
 
 
-def _ids(records: Iterable[Any]) -> List[int]:
-    return [record.id for record in records if record.id is not None]
-
-
-def _add_curated_source(
+def _upsert_curated_source(
     db: Session,
     curated_table_name: str,
     curated_record_id: int,
@@ -424,14 +399,24 @@ def _add_curated_source(
     ingestion_batch_id: int,
     raw_record_id: Optional[str] = None,
 ) -> None:
-    db.add(
-        CuratedRecordSource(
+    curated_source = (
+        db.query(CuratedRecordSource)
+        .filter(
+            CuratedRecordSource.curated_table_name == curated_table_name,
+            CuratedRecordSource.curated_record_id == curated_record_id,
+            CuratedRecordSource.source_system_id == source_system_id,
+        )
+        .first()
+    )
+    if curated_source is None:
+        curated_source = CuratedRecordSource(
             curated_table_name=curated_table_name,
             curated_record_id=curated_record_id,
             source_system_id=source_system_id,
-            ingestion_batch_id=ingestion_batch_id,
-            raw_table_name="fhir_bundle",
-            raw_record_id=raw_record_id,
-            transform_version=FHIR_UPLOAD_TRANSFORM_VERSION,
         )
-    )
+        db.add(curated_source)
+
+    curated_source.ingestion_batch_id = ingestion_batch_id
+    curated_source.raw_table_name = "fhir_bundle"
+    curated_source.raw_record_id = raw_record_id
+    curated_source.transform_version = FHIR_UPLOAD_TRANSFORM_VERSION
