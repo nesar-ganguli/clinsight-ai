@@ -1,6 +1,6 @@
 # ClinSight AI: Current Implementation
 
-> Status snapshot: 2026-08-25, after incremental-plan Change 3 (typed clinical timestamps).
+> Status snapshot: 2026-08-25, after incremental-plan Change 4 (Airflow orchestration for the synthetic hospital pipeline).
 >
 > This document describes what the repository implements today. It is based on the application source, Alembic migrations, dbt models, scripts, frontend, and tests. It intentionally distinguishes implemented behavior from product intent and production-ready behavior.
 
@@ -9,10 +9,10 @@
 ClinSight AI is a working full-stack clinical chart-review demo with three connected concerns:
 
 1. A FastAPI application accepts a constrained subset of FHIR R4 Bundles, normalizes six resource types, persists patient-centric records, records source lineage, and exposes protected clinical APIs.
-2. A separate synthetic hospital pipeline generates operational `raw_*` data, transforms it with dbt into app-shaped clinical views, and can export those views back into uploadable FHIR Bundles.
+2. A synthetic hospital pipeline generates operational `raw_*` data, transforms it with dbt into app-shaped clinical views, and can export those views back into uploadable FHIR Bundles. Its generation, dbt build, dbt test, and metrics steps can also run as one manually triggered Airflow DAG.
 3. A Next.js application provides role-aware workflows for FHIR ingestion, patient search, longitudinal review, quality checks, rule-grounded insights, chart Q&A, source provenance, and audit review.
 
-The repository is beyond a simple upload demo: it has migrations, two clinical read paths, four demo RBAC roles, provenance tables, audit events, external SMART Health IT sandbox import, deterministic clinical rules, optional LLM-assisted chart Q&A, Docker orchestration, repeatable synthetic data, and 40 passing backend tests.
+The repository is beyond a simple upload demo: it has migrations, two clinical read paths, four demo RBAC roles, provenance tables, audit events, external SMART Health IT sandbox import, deterministic clinical rules, optional LLM-assisted chart Q&A, Docker orchestration, repeatable synthetic data, an opt-in Airflow orchestrator, and 44 passing backend tests.
 
 It is still a demo/reference implementation rather than a production clinical system. Authentication uses locally created demo accounts and a shared password; FHIR support is intentionally narrow; patient identity is source-aware but only explicitly mapped rather than probabilistically reconciled; the AI safety checks are lightweight; and there is no production security, observability, deployment, or compliance layer.
 
@@ -23,7 +23,8 @@ It is still a demo/reference implementation rather than a production clinical sy
 | 1. Source-aware FHIR resource upserts | Complete and verified | Child records are inserted or updated by patient, source system, and FHIR resource ID. Omitted records are retained and records from different sources coexist. |
 | 2. Canonical/source-aware patient identity | Complete and verified | `patient_source_identifiers` is authoritative for ingestion lookup. Identical patient IDs from different sources remain separate unless explicitly mapped to one canonical patient. |
 | 3. Typed clinical timestamps | Complete and verified | Six clinical timeline fields use timezone-aware ORM/database types, FHIR inputs normalize to UTC, invalid values become null, and timeline/latest-record sorting compares actual instants. |
-| 4–8 | Not implemented | Airflow, durable failures, quarantine, SQL pagination, and pipeline observability remain future work. |
+| 4. Airflow orchestration for the synthetic hospital pipeline | Complete and verified within the local test boundary | One manual DAG chains raw generation, dbt run, dbt test, and a batch-scoped count report, with two retries and a shared batch ID. The optional Compose profile leaves normal startup unchanged. |
+| 5–8 | Not implemented | Durable ingestion failures, quarantine, SQL pagination, and persistent pipeline observability remain future work. |
 
 ## System shape
 
@@ -40,8 +41,11 @@ flowchart LR
     API --> Audit[(Users and audit logs)]
 
     Generator[Synthetic hospital generator] --> Raw[(Operational raw_* tables)]
+    Airflow[Manual Airflow DAG] --> Generator
+    Airflow --> Dbt
     Raw --> Dbt[dbt staging views]
     Dbt --> Marts[(analytics_clinical views)]
+    Airflow --> Metrics[Batch count report in task logs]
     Marts --> API
     Marts --> Export[FHIR bundle generator]
     Export --> Upload
@@ -67,15 +71,16 @@ The API deliberately hides this distinction from most callers through [`clinical
 | [`backend/app/services`](../backend/app/services) | FHIR parsing/ingestion, unified clinical reads, quality rules, insights, chat, authentication, audit, and SMART client. |
 | [`backend/app/models`](../backend/app/models) | SQLAlchemy mappings for clinical, provenance, raw, staging, user, and audit tables. |
 | [`backend/alembic/versions`](../backend/alembic/versions) | Ten migrations representing the complete database evolution. |
-| [`backend/scripts`](../backend/scripts) | Demo seeding, metrics, synthetic hospital generation, and FHIR export. |
-| [`backend/tests`](../backend/tests) | 40 backend unit/API tests, using SQLite and mocked external services. |
+| [`backend/scripts`](../backend/scripts) | Demo seeding, interview metrics, synthetic hospital generation, batch count reporting, and FHIR export. |
+| [`backend/tests`](../backend/tests) | 44 backend unit/API/configuration tests, using SQLite and mocked external services. |
 | [`dbt/models/staging`](../dbt/models/staging) | Eight cleaning/normalization views over operational raw tables. |
 | [`dbt/models/marts/clinical`](../dbt/models/marts/clinical) | Six clinical views matching the API's patient record concepts. |
+| [`airflow/dags`](../airflow/dags) | One manually triggered synthetic-to-dbt DAG plus a dependency-light task definition used by tests. |
 | [`frontend/app`](../frontend/app) | Next.js App Router pages for workspace, login, patient detail, and audit logs. |
 | [`frontend/components`](../frontend/components) | Client-side upload, search, external import, demo-role, and chart-chat panels. |
-| [`docker-compose.yml`](../docker-compose.yml) | PostgreSQL, backend, frontend, and opt-in pipeline/test/seed/metrics services. |
+| [`docker-compose.yml`](../docker-compose.yml) | PostgreSQL, backend, frontend, opt-in pipeline/test/seed/metrics jobs, and an isolated `airflow` profile. |
 
-Approximate source size at this snapshot is 4,550 backend application lines, 1,117 backend script lines, 1,592 backend test lines, 2,465 frontend TypeScript/TSX/CSS lines, and 952 dbt model/macro/documentation lines. Generated build and dbt artifacts are excluded.
+Approximate source size at this snapshot is 4,550 backend application lines, 1,232 backend script lines, 1,703 backend test lines, 2,465 frontend TypeScript/TSX/CSS lines, 952 dbt model/macro/documentation lines, and 130 Airflow image/DAG/requirement lines. Generated build and dbt artifacts are excluded.
 
 ## Runtime and configuration
 
@@ -109,7 +114,7 @@ The always-on services are:
 - `backend`: migrates then runs Uvicorn on port 8000.
 - `frontend`: builds and serves Next.js on port 3000.
 
-The `tools` profile adds `generate-hospital-data`, `dbt-run`, `generate-fhir`, `backend-tests`, `seed`, and `metrics`. These are separate jobs, not a scheduled or automatically chained workflow.
+The `tools` profile adds `generate-hospital-data`, `dbt-run`, `generate-fhir`, `backend-tests`, `seed`, and `metrics` as independent jobs. The separate `airflow` profile adds a local Airflow 3.3.1 standalone service that automatically chains the synthetic generation and dbt validation steps only when its DAG is manually triggered. Neither profile starts during normal `docker compose up --build` startup.
 
 ## Database implementation
 
@@ -266,6 +271,26 @@ The child marts do not select only the latest batch. If multiple different batch
 [`generate_fhir_bundles.py`](../backend/scripts/generate_fhir_bundles.py) reads the unified clinical service, constructs one collection Bundle per selected patient, and writes JSON files. It creates stable-looking resource IDs from the database/view IDs and tags each Bundle as generated.
 
 Export and import are separate steps. Generating a Bundle does not insert it into the application clinical tables; a generated file must still be uploaded or seeded if that copy is desired in the ORM tables.
+
+### Airflow orchestration
+
+[`clinsight_hospital_pipeline.py`](../airflow/dags/clinsight_hospital_pipeline.py) defines one DAG named `clinsight_hospital_pipeline`. It has no schedule and no catch-up behavior; an operator must trigger each run from the Airflow UI or CLI. Its exact dependency chain is:
+
+```text
+generate_hospital_data -> dbt_run -> dbt_test -> record_pipeline_metrics
+```
+
+The tasks reuse existing project behavior instead of duplicating transformation logic:
+
+- generation runs Alembic and `scripts/generate_hospital_data.py`;
+- dbt run and test use the existing project, example profile, and `DBT_SELECT` value;
+- the final script queries all eight raw tables and all six dbt clinical views for the run's ingestion batch and prints one JSON count report to the task log.
+
+Every task retries twice with a five-minute delay. Parameters control patient count, seed, and batch ID. When `batch_id` is empty, the Airflow run ID becomes the shared raw-generation and metrics batch identifier. A maximum of one DAG run can be active, preventing simultaneous runs of this particular DAG from replacing the same explicitly supplied batch.
+
+The Airflow image copies the existing backend and dbt projects and installs their minimal pipeline dependencies. `pip check` runs while the image builds. Its standalone metadata database and generated development login persist in the `clinsight_airflow` volume, while the application/raw/clinical data continues to use the normal PostgreSQL service.
+
+This is deliberately local orchestration, not a production Airflow deployment. It does not schedule runs, use a distributed executor, export FHIR, ingest interactive uploads, persist a pipeline-run entity, call the manual dbt audit endpoint, send alerts, or define production secrets. The count report is operational evidence in Airflow task logs; Change 8 is still responsible for durable pipeline metrics and status APIs.
 
 ## Unified clinical read behavior
 
@@ -425,7 +450,10 @@ The timeline merges all five child resource types and sorts descending by parsed
 
 At this snapshot:
 
-- `backend/.venv/bin/python -m pytest -q`: **40 passed**.
+- `backend/.venv/bin/python -m pytest -q`: **44 passed**.
+- Airflow DAG/task contract tests: **successful**, covering the exact four-task chain, retry policy, strict shell commands, existing generator/dbt commands, shared batch templating, manual schedule, Compose profile isolation, and image declarations.
+- Pipeline metrics tests against batch-scoped SQLite raw and clinical fixtures: **successful**.
+- `docker-compose.yml` YAML parsing/profile assertions and Python compilation of the new DAG/report files: **successful**.
 - Alembic `upgrade -> downgrade 0009 -> upgrade` on SQLite: **successful**, ending at `0010_typed_clinical_dates`.
 - A seeded revision-0008 patient upgraded to `0009` with its source identifier backfilled; a second source then stored the same FHIR patient ID as a separate patient and mapping: **successful**.
 - Seeded legacy string values upgraded through `0010`: valid date-only/UTC/offset/naive ISO values became typed timestamps, invalid and null values became null, all six SQLite columns report `DATETIME`, and downgrade/re-upgrade preserved the converted values: **successful**.
@@ -452,7 +480,8 @@ Backend coverage includes:
 - authentication, RBAC, patient access audit, audit filtering/reporting;
 - mocked SMART search/import;
 - raw operational models and deterministic generator scenarios;
-- generated FHIR validity and re-upload.
+- generated FHIR validity and re-upload;
+- Airflow pipeline definition/configuration and batch-scoped pipeline count reporting.
 
 Important test boundaries:
 
@@ -461,6 +490,7 @@ Important test boundaries:
 - External FHIR and LLM HTTP calls are mocked.
 - The dbt-shaped API test creates compatible SQLite tables; it does not run dbt SQL.
 - The five timestamp-aware dbt mart expressions were not executed locally because this machine has neither Docker nor a `dbt` executable.
+- For the same reason, the Airflow image was not built and the DAG was not executed against PostgreSQL/dbt on this machine; the automated Change 4 coverage validates its Python contract, commands, Compose structure, and SQLite metrics behavior.
 - No visible CI workflow runs these checks on commit.
 
 ## Current implementation gaps and risks
@@ -475,7 +505,7 @@ The most important engineering gaps, in priority order, are:
 6. **Grounding checks are structural, not entailment checks.** They prove citations resolve, but not that conclusions are clinically correct or fully supported.
 7. **Audit is useful but not compliance-grade.** It is neither immutable nor comprehensive, and dbt audit reporting is manual.
 8. **Scale behavior is demo-oriented.** Unified listing loads entire sources before pagination, SMART retrieval is synchronous, and insight/chat rules run in the request process.
-9. **Operational readiness is limited.** Compose contains demo database credentials; there is no production secrets flow, TLS/reverse-proxy config, worker strategy, monitoring, tracing, backup policy, rate limiting, or CI/CD.
+9. **Operational readiness is limited.** The Airflow DAG makes local runs retryable and visible, but it is manual standalone orchestration with log-only completion counts. Compose contains demo database credentials; there is no production secrets flow, TLS/reverse-proxy config, distributed worker strategy, alerting, tracing, backup policy, rate limiting, or CI/CD.
 10. **Clinical governance is absent.** There is no ruleset approval/version lifecycle, clinician feedback workflow, model governance, prompt/version logging, or validation against clinical standards.
 
 ## What the repository can credibly demonstrate today
@@ -484,7 +514,7 @@ ClinSight AI currently demonstrates an end-to-end, source-aware clinical data pr
 
 ```text
 FHIR or synthetic operational input
-  → parsing/normalization or dbt transformation
+  → parsing/normalization or manually orchestrated dbt transformation
   → unified patient record access
   → role-aware longitudinal chart
   → data quality and deterministic clinical rules

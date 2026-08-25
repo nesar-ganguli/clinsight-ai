@@ -78,6 +78,34 @@ docker compose --profile tools run --rm dbt-run
 docker compose --profile tools run --rm generate-fhir
 ```
 
+Run the synthetic hospital-to-dbt flow as one optional Airflow DAG:
+
+```bash
+docker compose --profile airflow up --build -d db airflow
+docker compose --profile airflow exec airflow \
+  airflow dags trigger clinsight_hospital_pipeline \
+  --conf '{"batch_id":"airflow-demo-001","patient_count":100,"seed":42}'
+```
+
+Open Airflow at `http://localhost:8080` and sign in as `admin`. Airflow generates the local-development password on first startup. Read it from the persisted password file:
+
+```bash
+docker compose --profile airflow exec airflow \
+  cat /opt/airflow/simple_auth_manager_passwords.json.generated
+```
+
+The DAG is intentionally manual (`schedule=None`) and runs:
+
+```text
+generate_hospital_data -> dbt_run -> dbt_test -> record_pipeline_metrics
+```
+
+Each task retries twice after a five-minute delay. `batch_id` is passed to raw generation and the final count report; if it is omitted, the unique Airflow run ID is used. The metrics task prints batch-scoped raw and clinical counts to Airflow logs without mutating application clinical records. Stop only the optional orchestrator with:
+
+```bash
+docker compose --profile airflow stop airflow
+```
+
 Run interview metrics:
 
 ```bash

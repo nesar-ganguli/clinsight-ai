@@ -137,5 +137,35 @@ services:
         condition: service_healthy
     command: sh -c "alembic upgrade head && python scripts/measure_demo_metrics.py"
 
+  airflow:
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    profiles:
+      - airflow
+    environment:
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: admin:admin
+      DATABASE_URL: postgresql+psycopg2://clinsight:clinsight@db:5432/clinsight
+      CLINICAL_SCHEMA: analytics_clinical
+      CLINSIGHT_DBT_HOST: db
+      CLINSIGHT_DBT_PORT: "5432"
+      CLINSIGHT_DBT_USER: clinsight
+      CLINSIGHT_DBT_PASSWORD: clinsight
+      CLINSIGHT_DBT_DBNAME: clinsight
+      CLINSIGHT_DBT_SCHEMA: analytics
+      DBT_SELECT: ${DBT_SELECT:-staging marts.clinical}
+    ports:
+      - "8080:8080"
+    volumes:
+      - clinsight_airflow:/opt/airflow
+      - ./airflow/dags:/opt/airflow/dags:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    command: standalone
+
 volumes:
   clinsight_postgres:
+  clinsight_airflow:
