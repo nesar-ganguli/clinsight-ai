@@ -24,6 +24,10 @@ SMART_HEALTH_IT_SOURCE_NAME = "SMART Health IT R4 Sandbox"
 FHIR_UPLOAD_TRANSFORM_VERSION = "fhir-upload-v1"
 GENERATED_FHIR_SOURCE_MARKER = "clinsight-generated-fhir-bundle"
 SMART_HEALTH_IT_SOURCE_MARKER = "smart-health-it-r4-sandbox"
+SAFE_INGESTION_ERROR_MESSAGES = {
+    "No Patient resource found in bundle",
+    "Source patient identifier is already mapped to another canonical patient",
+}
 
 
 def ingest_fhir_bundle(
@@ -32,25 +36,53 @@ def ingest_fhir_bundle(
     filename: Optional[str] = None,
     content_hash: Optional[str] = None,
 ) -> Dict[str, Any]:
+    source_system = _get_or_create_fhir_source(db, bundle)
+    started_at = datetime.now(timezone.utc)
+    ingestion_batch = IngestionBatch(
+        source_system_id=source_system.id,
+        ingestion_type=source_system.system_type,
+        filename=filename,
+        content_hash=content_hash or _hash_bundle(bundle),
+        status="processing",
+        record_count=_count_bundle_resources(bundle),
+        accepted_count=0,
+        rejected_count=0,
+        started_at=started_at,
+    )
+    db.add(ingestion_batch)
+    db.flush()
+    ingestion_batch_id = ingestion_batch.id
+    source_system_id = source_system.id
+    db.commit()
+
+    try:
+        persisted_batch = db.get(IngestionBatch, ingestion_batch_id)
+        persisted_source = db.get(SourceSystem, source_system_id)
+        return _ingest_fhir_bundle_clinical(
+            bundle,
+            db,
+            source_system=persisted_source,
+            ingestion_batch=persisted_batch,
+        )
+    except Exception as exc:
+        db.rollback()
+        _mark_ingestion_batch_failed(db, ingestion_batch_id, exc)
+        raise
+
+
+def _ingest_fhir_bundle_clinical(
+    bundle: Dict[str, Any],
+    db: Session,
+    source_system: SourceSystem,
+    ingestion_batch: IngestionBatch,
+) -> Dict[str, Any]:
     parsed_data = parse_fhir_bundle(bundle)
     patient_payload = parsed_data.get("patient")
 
     if not patient_payload:
         raise ValueError("No Patient resource found in bundle")
 
-    source_system = _get_or_create_fhir_source(db, bundle)
     transformed_at = datetime.now(timezone.utc)
-    ingestion_batch = IngestionBatch(
-        source_system_id=source_system.id,
-        ingestion_type=source_system.system_type,
-        filename=filename,
-        content_hash=content_hash or _hash_bundle(bundle),
-        status="processed",
-        record_count=sum(parsed_data.get("resource_counts", {}).values()),
-        processed_at=transformed_at
-    )
-    db.add(ingestion_batch)
-    db.flush()
 
     import_mode = "created"
     fhir_patient_id = patient_payload.get("fhir_patient_id")
@@ -206,14 +238,70 @@ def ingest_fhir_bundle(
             },
         )
 
-    db.commit()
-    db.refresh(patient)
+    resource_counts = parsed_data.get("resource_counts", {})
+    record_count = sum(resource_counts.values())
+    accepted_count = _accepted_resource_count(parsed_data)
+    ingestion_batch.status = "success"
+    ingestion_batch.record_count = record_count
+    ingestion_batch.accepted_count = accepted_count
+    ingestion_batch.rejected_count = max(record_count - accepted_count, 0)
+    ingestion_batch.error_message = None
+    ingestion_batch.completed_at = datetime.now(timezone.utc)
 
-    return {
+    result = {
         "patient_id": patient.id,
         "import_mode": import_mode,
-        "resource_counts": parsed_data.get("resource_counts", {}),
+        "resource_counts": resource_counts,
     }
+    db.commit()
+    return result
+
+
+def _count_bundle_resources(bundle: Dict[str, Any]) -> int:
+    entries = bundle.get("entry", [])
+    if not isinstance(entries, list):
+        return 0
+
+    return sum(
+        1
+        for entry in entries
+        if isinstance(entry, dict)
+        and isinstance(entry.get("resource"), dict)
+        and entry["resource"].get("resourceType")
+    )
+
+
+def _accepted_resource_count(parsed_data: Dict[str, Any]) -> int:
+    accepted_count = 1 if parsed_data.get("patient") else 0
+    for key in (
+        "conditions",
+        "observations",
+        "encounters",
+        "medication_requests",
+        "allergies",
+    ):
+        accepted_count += len(parsed_data.get(key, []))
+    return accepted_count
+
+
+def _mark_ingestion_batch_failed(db: Session, ingestion_batch_id: int, exc: Exception) -> None:
+    ingestion_batch = db.get(IngestionBatch, ingestion_batch_id)
+    if ingestion_batch is None:
+        raise RuntimeError(f"Persisted ingestion batch {ingestion_batch_id} was not found") from exc
+
+    ingestion_batch.status = "failed"
+    ingestion_batch.accepted_count = 0
+    ingestion_batch.rejected_count = ingestion_batch.record_count
+    ingestion_batch.error_message = _sanitize_ingestion_error(exc)
+    ingestion_batch.completed_at = datetime.now(timezone.utc)
+    db.commit()
+
+
+def _sanitize_ingestion_error(exc: Exception) -> str:
+    message = " ".join(str(exc).split())
+    if isinstance(exc, ValueError) and message in SAFE_INGESTION_ERROR_MESSAGES:
+        return message
+    return f"{type(exc).__name__}: FHIR bundle ingestion failed"
 
 
 def _get_or_create_fhir_source(db: Session, bundle: Dict[str, Any]) -> SourceSystem:

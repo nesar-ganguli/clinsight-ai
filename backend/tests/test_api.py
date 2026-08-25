@@ -16,6 +16,7 @@ from app.models.observation import Observation
 from app.models.patient import Patient
 from app.models.patient_source_identifier import PatientSourceIdentifier
 from app.models.source_system import SourceSystem
+from app.services import ingestion as ingestion_service
 
 
 SAMPLE_BUNDLE_PATH = Path(__file__).resolve().parent.parent / "sample_data" / "patient_bundle_1.json"
@@ -382,8 +383,13 @@ def test_upload_bundle_records_multisource_ingestion_metadata(client):
         assert ingestion_batch.source_system_id == source_system.id
         assert ingestion_batch.ingestion_type == "fhir_upload"
         assert ingestion_batch.filename == "patient_bundle_1.json"
-        assert ingestion_batch.status == "processed"
+        assert ingestion_batch.status == "success"
         assert ingestion_batch.record_count == sum(payload["resource_counts"].values())
+        assert ingestion_batch.accepted_count == ingestion_batch.record_count
+        assert ingestion_batch.rejected_count == 0
+        assert ingestion_batch.error_message is None
+        assert ingestion_batch.started_at is not None
+        assert ingestion_batch.completed_at is not None
         assert patient_identifier.patient_id == payload["patient_id"]
         assert patient_identifier.identifier_type == "fhir_patient_id"
         assert patient_identifier.identifier_value == "patient-001"
@@ -402,6 +408,91 @@ def test_upload_bundle_records_multisource_ingestion_metadata(client):
             "medication_requests",
             "allergy_intolerances",
         }
+    finally:
+        db.close()
+
+
+def test_failed_ingestion_batch_persists_when_bundle_has_no_patient(client):
+    bundle = {
+        "resourceType": "Bundle",
+        "type": "collection",
+        "entry": [
+            {
+                "resource": {
+                    "resourceType": "Condition",
+                    "id": "condition-without-patient",
+                }
+            }
+        ],
+    }
+
+    response = client.post(
+        "/api/upload",
+        files={"file": ("missing-patient.json", json.dumps(bundle), "application/json")},
+        headers=auth_headers(client),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "No Patient resource found in bundle"
+
+    db = SessionLocal()
+    try:
+        ingestion_batch = db.query(IngestionBatch).one()
+        assert ingestion_batch.status == "failed"
+        assert ingestion_batch.record_count == 1
+        assert ingestion_batch.accepted_count == 0
+        assert ingestion_batch.rejected_count == 1
+        assert ingestion_batch.error_message == "No Patient resource found in bundle"
+        assert ingestion_batch.started_at is not None
+        assert ingestion_batch.completed_at is not None
+        assert db.query(Patient).count() == 0
+        assert db.query(CuratedRecordSource).count() == 0
+    finally:
+        db.close()
+
+
+def test_clinical_records_roll_back_while_failed_batch_and_sanitized_error_persist(
+    client,
+    monkeypatch,
+):
+    bundle = load_sample_bundle()
+    original_upsert = ingestion_service._upsert_clinical_record
+    sensitive_error = "patient Jane Doe payload {\"ssn\":\"123-45-6789\"}"
+
+    def fail_after_clinical_write(*args, **kwargs):
+        original_upsert(*args, **kwargs)
+        raise ValueError(sensitive_error)
+
+    monkeypatch.setattr(
+        ingestion_service,
+        "_upsert_clinical_record",
+        fail_after_clinical_write,
+    )
+
+    response = client.post(
+        "/api/upload",
+        files={"file": ("rollback.json", json.dumps(bundle), "application/json")},
+        headers=auth_headers(client),
+    )
+
+    assert response.status_code == 400
+
+    db = SessionLocal()
+    try:
+        ingestion_batch = db.query(IngestionBatch).one()
+        assert ingestion_batch.status == "failed"
+        assert ingestion_batch.accepted_count == 0
+        assert ingestion_batch.rejected_count == ingestion_batch.record_count
+        assert ingestion_batch.error_message == "ValueError: FHIR bundle ingestion failed"
+        assert "Jane Doe" not in ingestion_batch.error_message
+        assert "123-45-6789" not in ingestion_batch.error_message
+        assert ingestion_batch.completed_at is not None
+
+        assert db.query(SourceSystem).count() == 1
+        assert db.query(Patient).count() == 0
+        assert db.query(PatientSourceIdentifier).count() == 0
+        assert db.query(Condition).count() == 0
+        assert db.query(CuratedRecordSource).count() == 0
     finally:
         db.close()
 
