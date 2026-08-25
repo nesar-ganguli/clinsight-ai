@@ -2,12 +2,13 @@ from datetime import date, datetime
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import inspect, or_, text
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import settings
 from app.core.temporal import parse_fhir_datetime
 from app.models.patient import Patient
+from app.repositories.patient_directory import list_patient_summaries
 
 
 CLINICAL_TABLES = {
@@ -27,15 +28,23 @@ def list_patient_records(
     limit: int = 20,
     offset: int = 0,
 ) -> Dict[str, Any]:
-    app_patients = _list_app_patient_summaries(db, search) if ingestion_batch_id is None else []
-    dbt_patients = _list_dbt_patient_summaries(db, search, ingestion_batch_id)
-    patients_by_id = {patient.id: patient for patient in dbt_patients}
-    patients_by_id.update({patient.id: patient for patient in app_patients})
-    patients = sorted(patients_by_id.values(), key=lambda patient: patient.id, reverse=True)
+    clinical_patient_table = (
+        _clinical_table_name(db, "patients")
+        if _clinical_table_exists(db, "patients")
+        else None
+    )
+    patient_rows, total = list_patient_summaries(
+        db,
+        clinical_patient_table=clinical_patient_table,
+        search=search,
+        ingestion_batch_id=ingestion_batch_id,
+        limit=limit,
+        offset=offset,
+    )
 
     return {
-        "items": patients[offset:offset + limit],
-        "total": len(patients),
+        "items": [_namespace(row) for row in patient_rows],
+        "total": total,
         "limit": limit,
         "offset": offset,
     }
@@ -47,19 +56,6 @@ def get_patient_record(db: Session, patient_id: int):
         return app_patient
 
     return _get_dbt_patient(db, patient_id)
-
-
-def _list_app_patient_summaries(db: Session, search: Optional[str]) -> List[Any]:
-    query = db.query(Patient)
-    if search:
-        search_term = f"%{search.strip()}%"
-        query = query.filter(
-            or_(
-                Patient.full_name.ilike(search_term),
-                Patient.fhir_patient_id.ilike(search_term),
-            )
-        )
-    return query.all()
 
 
 def _get_app_patient(db: Session, patient_id: int):
@@ -75,59 +71,6 @@ def _get_app_patient(db: Session, patient_id: int):
         .filter(Patient.id == patient_id)
         .first()
     )
-
-
-def _list_dbt_patient_summaries(
-    db: Session,
-    search: Optional[str],
-    ingestion_batch_id: Optional[str] = None,
-) -> List[Any]:
-    if not _clinical_table_exists(db, "patients"):
-        return []
-
-    sql = f"""
-        select
-            id,
-            fhir_patient_id,
-            full_name,
-            gender,
-            birth_date,
-            source_type,
-            source_system,
-            source_record_id,
-            ingestion_batch_id,
-            transformed_at,
-            source_patient_id
-        from {_clinical_table_name(db, "patients")}
-    """
-    params: Dict[str, Any] = {}
-    filters = []
-    if search:
-        if db.bind.dialect.name == "sqlite":
-            filters.append("""
-                (
-                    lower(coalesce(full_name, '')) like lower(:search_term)
-                    or cast(id as text) like :search_term
-                    or lower(coalesce(source_patient_id, '')) like lower(:search_term)
-                )
-            """)
-        else:
-            filters.append("""
-                (
-                    full_name ilike :search_term
-                    or cast(id as text) ilike :search_term
-                    or coalesce(source_patient_id, '') ilike :search_term
-                )
-            """)
-        params["search_term"] = f"%{search.strip()}%"
-    if ingestion_batch_id:
-        filters.append("ingestion_batch_id = :ingestion_batch_id")
-        params["ingestion_batch_id"] = ingestion_batch_id
-    if filters:
-        sql += " where " + " and ".join(filters)
-
-    rows = db.execute(text(sql), params).mappings().all()
-    return [_namespace(row) for row in rows]
 
 
 def _get_dbt_patient(db: Session, patient_id: int):

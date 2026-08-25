@@ -3,9 +3,9 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import event, text
 
-from app.core.database import SessionLocal
+from app.core.database import SessionLocal, engine
 from app.models.audit_log import AuditLog
 from app.models.allergy_intolerance import AllergyIntolerance
 from app.models.condition import Condition
@@ -694,6 +694,140 @@ def test_list_patients_supports_search(client):
     assert payload["total"] == 1
     assert len(payload["items"]) == 1
     assert payload["items"][0]["full_name"] == "Alice Smith"
+
+
+def test_patient_directory_paginates_and_searches_combined_sources_in_sql(client):
+    db = SessionLocal()
+    statements = []
+
+    def capture_statement(_connection, _cursor, statement, _parameters, _context, _executemany):
+        if "deduplicated_patients" in statement:
+            statements.append(" ".join(statement.lower().split()))
+
+    try:
+        create_test_clinical_tables(db)
+        source_system = SourceSystem(
+            name="Change 7 Test Source",
+            system_type="external_fhir_api",
+        )
+        app_patient_100 = Patient(
+            id=100,
+            fhir_patient_id="app-fhir-100",
+            full_name="Application Patient 100",
+            source_type="fhir_upload",
+            source_system="Change 7 Test Source",
+            source_record_id="APP-100",
+        )
+        app_patient_300 = Patient(
+            id=300,
+            fhir_patient_id="app-fhir-300",
+            full_name="Application Patient 300",
+            source_type="fhir_upload",
+            source_system="Change 7 Test Source",
+            source_record_id="APP-300",
+        )
+        db.add_all([source_system, app_patient_100, app_patient_300])
+        db.flush()
+        db.add(
+            PatientSourceIdentifier(
+                patient_id=app_patient_100.id,
+                source_system_id=source_system.id,
+                identifier_type="medical_record_number",
+                identifier_value="ALT-SOURCE-100",
+            )
+        )
+        db.execute(text("""
+            insert into clinical_patients (
+                id, fhir_patient_id, full_name, gender, birth_date, source_type, source_system,
+                source_record_id, ingestion_batch_id, transformed_at, source_patient_id
+            ) values
+                (400, null, 'DBT Patient 400', 'female', '1980-01-01', 'hospital_database',
+                    'internal_hospital_ods', 'DBT-400', 'batch-400', '2026-08-25T12:00:00',
+                    'DBT-SOURCE-400'),
+                (300, null, 'DBT Collision 300', 'male', '1981-01-01', 'hospital_database',
+                    'internal_hospital_ods', 'DBT-300', 'batch-300', '2026-08-25T12:00:00',
+                    'DBT-SOURCE-300'),
+                (200, null, 'DBT Patient 200', 'other', '1982-01-01', 'hospital_database',
+                    'internal_hospital_ods', 'DBT-200', 'batch-200', '2026-08-25T12:00:00',
+                    'DBT-SOURCE-200')
+        """))
+        db.commit()
+
+        headers = auth_headers(client, "clinician")
+        event.listen(engine, "before_cursor_execute", capture_statement)
+
+        first_page = client.get(
+            "/api/patients",
+            params={"limit": 2, "offset": 0},
+            headers=headers,
+        )
+        middle_page = client.get(
+            "/api/patients",
+            params={"limit": 2, "offset": 1},
+            headers=headers,
+        )
+        final_boundary = client.get(
+            "/api/patients",
+            params={"limit": 2, "offset": 4},
+            headers=headers,
+        )
+        repeated_page = client.get(
+            "/api/patients",
+            params={"limit": 2, "offset": 0},
+            headers=headers,
+        )
+        mapped_identifier_search = client.get(
+            "/api/patients",
+            params={"search": "ALT-SOURCE-100"},
+            headers=headers,
+        )
+        dbt_identifier_search = client.get(
+            "/api/patients",
+            params={"search": "DBT-SOURCE-200"},
+            headers=headers,
+        )
+
+        assert first_page.status_code == 200
+        assert middle_page.status_code == 200
+        assert final_boundary.status_code == 200
+        assert repeated_page.status_code == 200
+        assert mapped_identifier_search.status_code == 200
+        assert dbt_identifier_search.status_code == 200
+
+        first_payload = first_page.json()
+        assert first_payload["total"] == 4
+        assert [patient["id"] for patient in first_payload["items"]] == [400, 300]
+        assert first_payload["items"][1]["full_name"] == "Application Patient 300"
+        assert repeated_page.json()["items"] == first_payload["items"]
+
+        middle_payload = middle_page.json()
+        assert middle_payload["total"] == 4
+        assert [patient["id"] for patient in middle_payload["items"]] == [300, 200]
+
+        assert final_boundary.json() == {
+            "items": [],
+            "total": 4,
+            "limit": 2,
+            "offset": 4,
+        }
+        assert [
+            patient["id"] for patient in mapped_identifier_search.json()["items"]
+        ] == [100]
+        assert [
+            patient["id"] for patient in dbt_identifier_search.json()["items"]
+        ] == [200]
+
+        assert any("union all" in statement for statement in statements)
+        assert any("row_number() over" in statement for statement in statements)
+        assert any(
+            "order by id desc" in statement
+            and "limit ? offset ?" in statement
+            for statement in statements
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", capture_statement)
+        drop_test_clinical_tables(db)
+        db.close()
 
 
 def test_quality_alerts_surface_structured_rules(client):

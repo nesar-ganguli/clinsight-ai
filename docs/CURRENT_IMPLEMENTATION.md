@@ -1,6 +1,6 @@
 # ClinSight AI: Current Implementation
 
-> Status snapshot: 2026-08-25, after incremental-plan Change 6 (record-level FHIR quarantine).
+> Status snapshot: 2026-08-25, after incremental-plan Change 7 (SQL-backed patient-directory search and pagination).
 >
 > This document describes what the repository implements today. It is based on the application source, Alembic migrations, dbt models, scripts, frontend, and tests. It intentionally distinguishes implemented behavior from product intent and production-ready behavior.
 
@@ -12,7 +12,7 @@ ClinSight AI is a working full-stack clinical chart-review demo with three conne
 2. A synthetic hospital pipeline generates operational `raw_*` data, transforms it with dbt into app-shaped clinical views, and can export those views back into uploadable FHIR Bundles. Its generation, dbt build, dbt test, and metrics steps can also run as one manually triggered Airflow DAG.
 3. A Next.js application provides role-aware workflows for FHIR ingestion, patient search, longitudinal review, quality checks, rule-grounded insights, chart Q&A, source provenance, and audit review.
 
-The repository is beyond a simple upload demo: it has migrations, two clinical read paths, four demo RBAC roles, provenance tables, durable ingestion attempt states, record-level quarantine, audit events, external SMART Health IT sandbox import, deterministic clinical rules, optional LLM-assisted chart Q&A, Docker orchestration, repeatable synthetic data, an opt-in Airflow orchestrator, and 51 passing backend tests.
+The repository is beyond a simple upload demo: it has migrations, two clinical read paths, four demo RBAC roles, provenance tables, durable ingestion attempt states, record-level quarantine, SQL-backed unified patient-directory pagination, audit events, external SMART Health IT sandbox import, deterministic clinical rules, optional LLM-assisted chart Q&A, Docker orchestration, repeatable synthetic data, an opt-in Airflow orchestrator, and 52 passing backend tests.
 
 It is still a demo/reference implementation rather than a production clinical system. Authentication uses locally created demo accounts and a shared password; FHIR support is intentionally narrow; patient identity is source-aware but only explicitly mapped rather than probabilistically reconciled; the AI safety checks are lightweight; and there is no production security, observability, deployment, or compliance layer.
 
@@ -26,7 +26,8 @@ It is still a demo/reference implementation rather than a production clinical sy
 | 4. Airflow orchestration for the synthetic hospital pipeline | Complete and verified within the local test boundary | One manual DAG chains raw generation, dbt run, dbt test, and a batch-scoped count report, with two retries and a shared batch ID. The optional Compose profile leaves normal startup unchanged. |
 | 5. Persist failed ingestion batch states | Complete and verified | Each accepted Bundle attempt first commits a `processing` batch. Clinical work then commits with `success`, or rolls back independently before the batch is finalized as `failed` with counts, completion time, and a sanitized error. |
 | 6. Quarantine record-level validation failures | Complete and verified | Invalid supported child resources are stored with source/batch linkage and raw JSON while valid siblings continue. Accepted, rejected, and unsupported counts are returned without exposing quarantined payloads. |
-| 7–8 | Not implemented | SQL pagination and persistent pipeline observability remain future work. |
+| 7. Move patient pagination/search into SQL | Complete and verified | One repository query combines application and dbt patient summaries with `UNION ALL`, resolves numeric-ID overlaps in SQL, filters and sorts in SQL, and retrieves only the requested offset/limit page. |
+| 8. Minimal pipeline observability | Not implemented | Persistent pipeline-run state, metrics, and status APIs remain future work. |
 
 ## System shape
 
@@ -72,10 +73,11 @@ The API deliberately hides this distinction from most callers through [`clinical
 | [`backend/app/main.py`](../backend/app/main.py) | Creates FastAPI, configures CORS, and registers all route groups. |
 | [`backend/app/api`](../backend/app/api) | HTTP endpoints and role dependencies. |
 | [`backend/app/services`](../backend/app/services) | FHIR parsing/ingestion, unified clinical reads, quality rules, insights, chat, authentication, audit, and SMART client. |
+| [`backend/app/repositories`](../backend/app/repositories) | Bounded database queries; currently the SQL-backed unified patient directory. |
 | [`backend/app/models`](../backend/app/models) | SQLAlchemy mappings for clinical, provenance, raw, staging, user, and audit tables. |
-| [`backend/alembic/versions`](../backend/alembic/versions) | Twelve migrations representing the complete database evolution. |
+| [`backend/alembic/versions`](../backend/alembic/versions) | Thirteen migrations representing the complete database evolution. |
 | [`backend/scripts`](../backend/scripts) | Demo seeding, interview metrics, synthetic hospital generation, batch count reporting, and FHIR export. |
-| [`backend/tests`](../backend/tests) | 51 backend unit/API/configuration tests, using SQLite and mocked external services. |
+| [`backend/tests`](../backend/tests) | 52 backend unit/API/configuration tests, using SQLite and mocked external services. |
 | [`dbt/models/staging`](../dbt/models/staging) | Eight cleaning/normalization views over operational raw tables. |
 | [`dbt/models/marts/clinical`](../dbt/models/marts/clinical) | Six clinical views matching the API's patient record concepts. |
 | [`airflow/dags`](../airflow/dags) | One manually triggered synthetic-to-dbt DAG plus a dependency-light task definition used by tests. |
@@ -83,7 +85,7 @@ The API deliberately hides this distinction from most callers through [`clinical
 | [`frontend/components`](../frontend/components) | Client-side upload, search, external import, demo-role, and chart-chat panels. |
 | [`docker-compose.yml`](../docker-compose.yml) | PostgreSQL, backend, frontend, opt-in pipeline/test/seed/metrics jobs, and an isolated `airflow` profile. |
 
-Approximate source size at this snapshot is 4,972 backend application lines, 1,234 backend script lines, 1,933 backend test lines, 2,470 frontend TypeScript/TSX/CSS lines, 952 dbt model/macro/documentation lines, and 130 Airflow image/DAG/requirement lines. Generated build and dbt artifacts are excluded.
+Approximate source size at this snapshot is 5,093 backend application lines, 1,234 backend script lines, 2,067 backend test lines, 2,483 frontend TypeScript/TSX/CSS lines, 934 dbt model/macro/documentation lines, and 130 Airflow image/DAG/requirement lines. Generated build, dependency, and dbt artifacts are excluded.
 
 ## Runtime and configuration
 
@@ -170,6 +172,8 @@ Migration `0010_typed_clinical_dates` adds typed temporary columns, parses and c
 Migration `0011_durable_batch_states` replaces the older `received_at`, `processed_at`, and `error_summary` columns with `started_at`, `completed_at`, and `error_message`, then adds accepted/rejected counts. Existing `processed` batches migrate to `success` with their original record counts and timestamps; downgrade restores the legacy names and status.
 
 Migration `0012_quarantine_records` adds the batch/source-linked quarantine table and indexes its identifiers, resource type, and error code. Deleting an ingestion batch cascades to its quarantined resources.
+
+Migration `0013_patient_directory_indexes` adds a standalone index on `patient_source_identifiers.identifier_value`. The canonical application patient ID is already indexed by its primary key, while patient name, FHIR patient ID, and source record ID already have model indexes. The new standalone index avoids relying on the existing composite uniqueness index, whose leading column is `source_system_id`, for source-identifier lookup. The current contains-search syntax (`%term%`) may still require scanning candidate rows; PostgreSQL trigram/full-text search is not enabled.
 
 Three FHIR sources are recognized from bundle metadata:
 
@@ -311,18 +315,22 @@ The patient API can surface both application rows and dbt views:
 
 - PostgreSQL dbt tables are resolved as `<CLINICAL_SCHEMA>.<table>`.
 - SQLite tests use optional `clinical_<table>` tables to emulate the view shape.
-- Patient listing loads application patients and, when present, dbt patients; it merges them by numeric ID, sorts descending, and applies offset/limit in Python.
-- Application rows overwrite dbt rows on numeric ID collision.
+- Patient listing delegates to [`patient_directory.py`](../backend/app/repositories/patient_directory.py), which constructs compatible application and dbt summary branches and combines them with SQL `UNION ALL`.
+- Search predicates are applied inside both source branches. Application search covers name, canonical numeric ID, FHIR patient ID, denormalized source record ID, and mapped `patient_source_identifiers.identifier_value`; dbt search also covers `source_patient_id`.
+- SQL `row_number()` partitions the combined result by numeric patient ID. Application rows have higher source priority, preserving the previous application-over-dbt collision behavior without merging full collections in Python.
+- One SQL query counts the filtered, deduplicated directory and a second orders by patient ID descending and applies `LIMIT`/`OFFSET`. Python receives only the requested page and adapts those rows to the existing response schema.
+- Supplying an ingestion batch ID, as the generated-FHIR script does, retains the prior dbt-only behavior and pushes the batch predicate into that SQL branch.
 - Patient detail first looks in the application `patients` table, then falls back to the dbt patient view.
 - dbt detail children are fetched from each clinical view by the stable patient ID and adapted to in-memory namespaces so downstream quality, insights, schemas, and frontend code see the same interface.
 
 Consequences of the current design:
 
-- Pagination happens after both complete result sets are loaded; it is suitable for a demo, not a large directory.
-- Search semantics differ slightly by source and database dialect.
+- Application memory and result transfer now scale with the requested page rather than total directory size. The exact-total query, source union/window operation, leading-wildcard substring search, and deep `OFFSET` can still become expensive as data grows.
+- Search is consistently case-insensitive across the two branches, but fields remain source-specific where their schemas differ. No typo tolerance, tokenization, ranking, trigram index, or full-text search is implemented.
 - There is no enterprise identity resolution between an uploaded patient and a dbt patient. They coexist unless their numeric IDs happen to collide.
-- Integer namespaces differ: ORM IDs are database sequences; dbt IDs are hashes. A collision is unlikely but is handled by silently preferring ORM data.
+- Integer namespaces differ: ORM IDs are database sequences; dbt IDs are hashes. A collision is unlikely but is deterministically handled by preferring the application row.
 - Every dbt read checks table existence through SQLAlchemy inspection; there is no cached catalog or materialized repository abstraction.
+- The dbt patient relation is normally a view and is not directly indexed here; performance also depends on its underlying raw/staging relations and the PostgreSQL query plan.
 
 ## API and RBAC
 
@@ -463,12 +471,13 @@ The timeline merges all five child resource types and sorts descending by parsed
 
 At this snapshot:
 
-- `backend/.venv/bin/python -m pytest -q`: **51 passed**.
+- `cd backend && PYTHONPATH=. .venv/bin/python -m pytest -q`: **52 passed**.
 - Airflow DAG/task contract tests: **successful**, covering the exact four-task chain, retry policy, strict shell commands, existing generator/dbt commands, shared batch templating, manual schedule, Compose profile isolation, and image declarations.
 - Pipeline metrics tests against batch-scoped SQLite raw and clinical fixtures: **successful**.
 - `docker-compose.yml` YAML parsing/profile assertions and Python compilation of the new DAG/report files: **successful**.
 - Alembic `0010 -> 0011 -> 0010 -> 0011` on SQLite with a historical processed batch: **successful**. Upgrade preserved counts/timestamps and mapped `processed` to `success`; downgrade restored the legacy fields/status; the final revision is `0011_durable_batch_states`.
 - Alembic `0011 -> 0012 -> 0011 -> 0012` on SQLite: **successful**. The quarantine table and indexes were created, removed on downgrade, and restored; the final revision is `0012_quarantine_records`. PostgreSQL offline SQL compilation emits `raw_payload JSONB NOT NULL`.
+- Alembic `0012 -> 0013 -> 0012 -> 0013` on isolated SQLite: **successful**. The standalone source-identifier index was created, removed on downgrade, and restored; the final revision is `0013_patient_directory_indexes`.
 - Alembic `upgrade -> downgrade 0009 -> upgrade` on SQLite: **successful**, ending at `0010_typed_clinical_dates`.
 - A seeded revision-0008 patient upgraded to `0009` with its source identifier backfilled; a second source then stored the same FHIR patient ID as a separate patient and mapping: **successful**.
 - Seeded legacy string values upgraded through `0010`: valid date-only/UTC/offset/naive ISO values became typed timestamps, invalid and null values became null, all six SQLite columns report `DATETIME`, and downgrade/re-upgrade preserved the converted values: **successful**.
@@ -495,6 +504,7 @@ Backend coverage includes:
 - quality rules and grounded insight evaluation;
 - deterministic chat, treatment refusal, mocked GitHub Models use, and chat audit;
 - manually created dbt-shaped SQLite clinical tables flowing through patient, quality, and insight APIs;
+- combined application/dbt patient-directory paging with exact totals, boundary offsets, stable descending order, application-row precedence on numeric-ID overlap, mapped application source-ID search, dbt source-patient-ID search, and assertions that the executed page query contains SQL `UNION ALL`, window deduplication, `LIMIT`, and `OFFSET`;
 - authentication, RBAC, patient access audit, audit filtering/reporting;
 - mocked SMART search/import;
 - raw operational models and deterministic generator scenarios;
@@ -523,7 +533,7 @@ The most important engineering gaps, in priority order, are:
 5. **dbt batch semantics can mix child history.** Latest patient demographics and all-batch child marts use different selection rules.
 6. **Grounding checks are structural, not entailment checks.** They prove citations resolve, but not that conclusions are clinically correct or fully supported.
 7. **Audit is useful but not compliance-grade.** It is neither immutable nor comprehensive, and dbt audit reporting is manual.
-8. **Scale behavior is demo-oriented.** Unified listing loads entire sources before pagination, SMART retrieval is synchronous, and insight/chat rules run in the request process.
+8. **Scale behavior remains partly demo-oriented.** Patient-directory rows are now filtered, deduplicated, sorted, and paged in SQL, but exact totals, leading-wildcard search, and deep offsets can remain costly. SMART retrieval is synchronous, and insight/chat rules run in the request process.
 9. **Operational readiness is limited.** The Airflow DAG makes local runs retryable and visible, but it is manual standalone orchestration with log-only completion counts. Compose contains demo database credentials; there is no production secrets flow, TLS/reverse-proxy config, distributed worker strategy, alerting, tracing, backup policy, rate limiting, or CI/CD.
 10. **Clinical governance is absent.** There is no ruleset approval/version lifecycle, clinician feedback workflow, model governance, prompt/version logging, or validation against clinical standards.
 

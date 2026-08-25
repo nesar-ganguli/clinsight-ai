@@ -18,7 +18,7 @@ class PatientSourceIdentifier(Base):
     patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False, index=True)
     source_system_id = Column(Integer, ForeignKey("source_systems.id"), nullable=False, index=True)
     identifier_type = Column(String(100), nullable=False)
-    identifier_value = Column(String(255), nullable=False)
+    identifier_value = Column(String(255), nullable=False, index=True)
     assigning_authority = Column(String(255), nullable=True)
     last_seen_batch_id = Column(Integer, ForeignKey("ingestion_batches.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
