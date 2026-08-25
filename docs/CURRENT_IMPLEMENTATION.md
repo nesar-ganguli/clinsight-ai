@@ -1,6 +1,6 @@
 # ClinSight AI: Current Implementation
 
-> Status snapshot: 2026-08-25, after incremental-plan Change 5 (durable ingestion batch failure states).
+> Status snapshot: 2026-08-25, after incremental-plan Change 6 (record-level FHIR quarantine).
 >
 > This document describes what the repository implements today. It is based on the application source, Alembic migrations, dbt models, scripts, frontend, and tests. It intentionally distinguishes implemented behavior from product intent and production-ready behavior.
 
@@ -12,7 +12,7 @@ ClinSight AI is a working full-stack clinical chart-review demo with three conne
 2. A synthetic hospital pipeline generates operational `raw_*` data, transforms it with dbt into app-shaped clinical views, and can export those views back into uploadable FHIR Bundles. Its generation, dbt build, dbt test, and metrics steps can also run as one manually triggered Airflow DAG.
 3. A Next.js application provides role-aware workflows for FHIR ingestion, patient search, longitudinal review, quality checks, rule-grounded insights, chart Q&A, source provenance, and audit review.
 
-The repository is beyond a simple upload demo: it has migrations, two clinical read paths, four demo RBAC roles, provenance tables, durable ingestion attempt states, audit events, external SMART Health IT sandbox import, deterministic clinical rules, optional LLM-assisted chart Q&A, Docker orchestration, repeatable synthetic data, an opt-in Airflow orchestrator, and 46 passing backend tests.
+The repository is beyond a simple upload demo: it has migrations, two clinical read paths, four demo RBAC roles, provenance tables, durable ingestion attempt states, record-level quarantine, audit events, external SMART Health IT sandbox import, deterministic clinical rules, optional LLM-assisted chart Q&A, Docker orchestration, repeatable synthetic data, an opt-in Airflow orchestrator, and 51 passing backend tests.
 
 It is still a demo/reference implementation rather than a production clinical system. Authentication uses locally created demo accounts and a shared password; FHIR support is intentionally narrow; patient identity is source-aware but only explicitly mapped rather than probabilistically reconciled; the AI safety checks are lightweight; and there is no production security, observability, deployment, or compliance layer.
 
@@ -22,10 +22,11 @@ It is still a demo/reference implementation rather than a production clinical sy
 | --- | --- | --- |
 | 1. Source-aware FHIR resource upserts | Complete and verified | Child records are inserted or updated by patient, source system, and FHIR resource ID. Omitted records are retained and records from different sources coexist. |
 | 2. Canonical/source-aware patient identity | Complete and verified | `patient_source_identifiers` is authoritative for ingestion lookup. Identical patient IDs from different sources remain separate unless explicitly mapped to one canonical patient. |
-| 3. Typed clinical timestamps | Complete and verified | Six clinical timeline fields use timezone-aware ORM/database types, FHIR inputs normalize to UTC, invalid values become null, and timeline/latest-record sorting compares actual instants. |
+| 3. Typed clinical timestamps | Complete and verified | Six clinical timeline fields use timezone-aware ORM/database types, valid FHIR inputs normalize to UTC, and timeline/latest-record sorting compares actual instants. Change 6 now quarantines children with explicitly invalid date values. |
 | 4. Airflow orchestration for the synthetic hospital pipeline | Complete and verified within the local test boundary | One manual DAG chains raw generation, dbt run, dbt test, and a batch-scoped count report, with two retries and a shared batch ID. The optional Compose profile leaves normal startup unchanged. |
 | 5. Persist failed ingestion batch states | Complete and verified | Each accepted Bundle attempt first commits a `processing` batch. Clinical work then commits with `success`, or rolls back independently before the batch is finalized as `failed` with counts, completion time, and a sanitized error. |
-| 6–8 | Not implemented | Record quarantine, SQL pagination, and persistent pipeline observability remain future work. |
+| 6. Quarantine record-level validation failures | Complete and verified | Invalid supported child resources are stored with source/batch linkage and raw JSON while valid siblings continue. Accepted, rejected, and unsupported counts are returned without exposing quarantined payloads. |
+| 7–8 | Not implemented | SQL pagination and persistent pipeline observability remain future work. |
 
 ## System shape
 
@@ -38,6 +39,7 @@ flowchart LR
     Smart[SMART Health IT public R4 sandbox] --> API
     API --> Parser[Constrained FHIR parser]
     Parser --> ORM[(App clinical tables)]
+    Parser --> Quarantine[(Quarantine JSONB)]
     API --> Lineage[(Source, batch, lineage tables)]
     API --> Audit[(Users and audit logs)]
 
@@ -71,9 +73,9 @@ The API deliberately hides this distinction from most callers through [`clinical
 | [`backend/app/api`](../backend/app/api) | HTTP endpoints and role dependencies. |
 | [`backend/app/services`](../backend/app/services) | FHIR parsing/ingestion, unified clinical reads, quality rules, insights, chat, authentication, audit, and SMART client. |
 | [`backend/app/models`](../backend/app/models) | SQLAlchemy mappings for clinical, provenance, raw, staging, user, and audit tables. |
-| [`backend/alembic/versions`](../backend/alembic/versions) | Eleven migrations representing the complete database evolution. |
+| [`backend/alembic/versions`](../backend/alembic/versions) | Twelve migrations representing the complete database evolution. |
 | [`backend/scripts`](../backend/scripts) | Demo seeding, interview metrics, synthetic hospital generation, batch count reporting, and FHIR export. |
-| [`backend/tests`](../backend/tests) | 46 backend unit/API/configuration tests, using SQLite and mocked external services. |
+| [`backend/tests`](../backend/tests) | 51 backend unit/API/configuration tests, using SQLite and mocked external services. |
 | [`dbt/models/staging`](../dbt/models/staging) | Eight cleaning/normalization views over operational raw tables. |
 | [`dbt/models/marts/clinical`](../dbt/models/marts/clinical) | Six clinical views matching the API's patient record concepts. |
 | [`airflow/dags`](../airflow/dags) | One manually triggered synthetic-to-dbt DAG plus a dependency-light task definition used by tests. |
@@ -81,7 +83,7 @@ The API deliberately hides this distinction from most callers through [`clinical
 | [`frontend/components`](../frontend/components) | Client-side upload, search, external import, demo-role, and chart-chat panels. |
 | [`docker-compose.yml`](../docker-compose.yml) | PostgreSQL, backend, frontend, opt-in pipeline/test/seed/metrics jobs, and an isolated `airflow` profile. |
 
-Approximate source size at this snapshot is 4,640 backend application lines, 1,232 backend script lines, 1,794 backend test lines, 2,465 frontend TypeScript/TSX/CSS lines, 952 dbt model/macro/documentation lines, and 130 Airflow image/DAG/requirement lines. Generated build and dbt artifacts are excluded.
+Approximate source size at this snapshot is 4,972 backend application lines, 1,234 backend script lines, 1,933 backend test lines, 2,470 frontend TypeScript/TSX/CSS lines, 952 dbt model/macro/documentation lines, and 130 Airflow image/DAG/requirement lines. Generated build and dbt artifacts are excluded.
 
 ## Runtime and configuration
 
@@ -147,7 +149,7 @@ The six concepts retain only the fields used by this product:
 
 The six timeline fields—condition onset, observation effective time, encounter start/end, medication authored time, and allergy recorded time—use `DateTime(timezone=True)`. PostgreSQL therefore uses timezone-aware timestamps; SQLite uses its `DATETIME` representation and the API boundary treats SQLite's timezone-naive values as UTC. Patient birth date remains a date string because Change 3 only targets timeline/filtering fields.
 
-FHIR date-only inputs are normalized to UTC midnight, timestamp offsets are converted to UTC, and timestamps without an offset are conservatively interpreted as UTC. Empty, partial, or invalid values become null. API and generated-FHIR output remain ISO 8601 strings with a `Z` suffix.
+FHIR date-only inputs are normalized to UTC midnight, timestamp offsets are converted to UTC, and timestamps without an offset are conservatively interpreted as UTC. Missing/null values remain null; explicit invalid values now quarantine the affected child resource during FHIR ingestion. Legacy migration conversion still maps unparseable stored strings to null. API and generated-FHIR output remain ISO 8601 strings with a `Z` suffix.
 
 ### Source and lineage tables
 
@@ -155,6 +157,7 @@ The active FHIR ingestion path uses:
 
 - `source_systems`: a reusable source definition.
 - `ingestion_batches`: one durable row per Bundle passed to the ingestion service, including filename, hash, lifecycle status, total/accepted/rejected counts, sanitized error, and start/completion timestamps.
+- `quarantine_records`: rejected supported resources linked to their ingestion batch and source system, with resource identity, stable error code/message, raw payload, and creation time. PostgreSQL stores the payload as `JSONB`; SQLite uses `JSON` for local tests.
 - `patient_source_identifiers`: authoritatively maps a source-specific patient identifier to the canonical application patient. `(source_system_id, identifier_value)` is unique; `identifier_type` remains descriptive.
 - `curated_record_sources`: maps each application clinical row to its source system, latest ingestion batch for that source/record pair, raw/FHIR record ID, and transform version.
 
@@ -165,6 +168,8 @@ Migration `0009_canonical_patient_identity` removes the global uniqueness constr
 Migration `0010_typed_clinical_dates` adds typed temporary columns, parses and copies valid legacy values, leaves invalid/unparseable values null, then replaces the old string columns. Its downgrade serializes typed values back to UTC ISO text. This copy strategy avoids database casts that can abort on malformed PostgreSQL data or mis-convert SQLite strings.
 
 Migration `0011_durable_batch_states` replaces the older `received_at`, `processed_at`, and `error_summary` columns with `started_at`, `completed_at`, and `error_message`, then adds accepted/rejected counts. Existing `processed` batches migrate to `success` with their original record counts and timestamps; downgrade restores the legacy names and status.
+
+Migration `0012_quarantine_records` adds the batch/source-linked quarantine table and indexes its identifiers, resource type, and error code. Deleting an ingestion batch cascades to its quarantined resources.
 
 Three FHIR sources are recognized from bundle metadata:
 
@@ -198,7 +203,7 @@ This means the earlier `raw_hospital_*`/ORM staging design is currently dormant 
 - MedicationRequest
 - AllergyIntolerance
 
-Unsupported resource types are counted in `resource_counts` but otherwise ignored. The first Patient becomes the bundle patient; later Patient resources are counted but ignored as patient entities.
+Unsupported resource types are counted but otherwise ignored. The first usable Patient becomes the bundle patient; malformed Patient candidates and additional Patient resources are rejected. A Bundle without any usable Patient is batch-fatal.
 
 The parser implements a deliberately small FHIR subset:
 
@@ -207,32 +212,34 @@ The parser implements a deliberately small FHIR subset:
 - Observations support only `valueQuantity` and `valueString`, plus `effectiveDateTime`.
 - Medication requests require `medicationCodeableConcept`; referenced Medication resources are not resolved.
 - Encounter and allergy fields are reduced to those stored by the application.
-- The six supported clinical date/time fields pass through one parser and become UTC `datetime` values before ORM persistence.
-- Parsed subject/patient references are retained in temporary dictionaries but are not validated against the selected Patient before persistence.
+- The six supported clinical date/time fields pass through one parser and become UTC `datetime` values before ORM persistence. Explicit invalid values reject that child; absent/null optional values remain null.
+- Every supported child must have a resource ID and a patient reference that resolves to the selected Patient. Absolute references containing `/Patient/{id}` are normalized before comparison.
+- Conditions and allergies require a transformable code/display; Observations additionally require `valueQuantity.value` or a non-empty `valueString`; Encounters require status; MedicationRequests require status, intent, and a transformable medication code/display.
 
-This is structural extraction, not full FHIR profile validation, terminology validation, or referential integrity checking.
+This is a narrow product validation boundary, not full FHIR profile/terminology validation. It checks only fields and representations required by the current transformation.
 
 ### Persistence behavior
 
 [`ingest_fhir_bundle`](../backend/app/services/ingestion.py) uses two transaction phases:
 
 1. Resolve/create the source system, create a batch with `status = processing`, start time, hash, filename, and an envelope record count, then commit that source/batch transaction immediately.
-2. Parse the Bundle and require a Patient.
+2. Parse the Bundle and require a usable Patient. Classify each remaining entry as accepted, rejected, or unsupported.
 3. Look up `(source_system_id, incoming FHIR patient ID)` in `patient_source_identifiers`.
 4. Load the mapped canonical patient, or create a new patient and source-identifier mapping when no mapping exists. No name/DOB or fuzzy matching is attempted.
-5. For every supported child with a FHIR ID, find a row by `(patient_id, source_system, fhir_resource_id)` and update it, or insert it when absent. Resources without a FHIR ID are inserted because no stable source key is available.
-6. Upsert per-source lineage to the latest ingestion batch and upsert the source-specific patient identifier.
-7. Set the batch to `success`, populate accepted/rejected counts and completion time, then commit the clinical work and batch completion together.
+5. For every valid supported child, find a row by `(patient_id, source_system, fhir_resource_id)` and update it, or insert it when absent.
+6. Insert one `quarantine_records` row for each rejected resource, including its raw JSON. Unsupported resource types are counted but not quarantined.
+7. Upsert per-source lineage to the latest ingestion batch and upsert the source-specific patient identifier.
+8. Set the batch to `success`, populate accepted/rejected counts and completion time, then commit valid clinical rows, quarantine rows, lineage, and batch completion together.
 
 Repeated delivery of the same source Bundle is idempotent at the identified child-record level. Changed incoming fields update the existing record and lineage batch, while a child omitted from a later Bundle is retained. No deletion or tombstone semantics are implemented yet.
 
 Two systems presenting the same FHIR patient ID now create separate canonical patients because the source system is part of the authoritative mapping. Multiple source identifiers can converge on one canonical patient only when a mapping is explicitly configured. When they do converge, source-aware child records coexist, while canonical patient demographics and denormalized patient-level source metadata reflect the latest import. The legacy `patients.fhir_patient_id` retains the value assigned when that canonical patient was created.
 
-If parsing or persistence fails after the initial batch commit, only the clinical transaction is rolled back. The service then loads the already durable batch in a new transaction, marks it `failed`, sets accepted count to zero, sets rejected count to the envelope record count, records completion time, and commits a sanitized error message. Two known validation messages are retained verbatim; unexpected exceptions store only the exception class and a generic ingestion-failed description so payload/PHI text is not copied into the error field.
+If a batch-fatal parsing or persistence failure occurs after the initial batch commit, the clinical and quarantine transaction is rolled back. The service then loads the already durable batch in a new transaction, marks it `failed`, sets accepted count to zero, sets rejected count to the envelope record count, records completion time, and commits a sanitized error message. Known batch validation messages are retained verbatim; unexpected exceptions store only the exception class and a generic ingestion-failed description so payload/PHI text is not copied into the batch error field.
 
-On a successful Bundle, accepted count means the one selected Patient plus supported child resources mapped by the parser. Extra Patient resources and unsupported resource types contribute to total/rejected counts because the current parser ignores them. Record-level partial acceptance is not implemented yet; that is the scope of Change 6. Transport failures rejected before the ingestion service—invalid UTF-8, invalid JSON, a non-`.json` filename, or a non-Bundle top level—still return HTTP 400 without creating an ingestion batch.
+On a successful Bundle, accepted count means the selected Patient plus supported child resources mapped by the parser; rejected count equals stored quarantine rows; unsupported count covers other FHIR resource types. These three values are returned in `ingestion_summary`, while the legacy per-type `resource_counts` remains. Raw quarantine payloads never appear in the upload or SMART-import response or their audit metadata. Transport failures rejected before the ingestion service—invalid UTF-8, invalid JSON, a non-`.json` filename, or a non-Bundle top level—still return HTTP 400 without creating an ingestion batch.
 
-Batch lifecycle rows are queryable through SQLAlchemy or directly in the database. There is not yet an ingestion-batch list/detail API or frontend troubleshooting screen.
+Batch lifecycle and quarantine rows are queryable through SQLAlchemy or directly in the database. There is not yet an ingestion-batch/quarantine list API, remediation workflow, replay operation, retention policy, or frontend troubleshooting screen.
 
 ### External SMART Health IT import
 
@@ -456,11 +463,12 @@ The timeline merges all five child resource types and sorts descending by parsed
 
 At this snapshot:
 
-- `backend/.venv/bin/python -m pytest -q`: **46 passed**.
+- `backend/.venv/bin/python -m pytest -q`: **51 passed**.
 - Airflow DAG/task contract tests: **successful**, covering the exact four-task chain, retry policy, strict shell commands, existing generator/dbt commands, shared batch templating, manual schedule, Compose profile isolation, and image declarations.
 - Pipeline metrics tests against batch-scoped SQLite raw and clinical fixtures: **successful**.
 - `docker-compose.yml` YAML parsing/profile assertions and Python compilation of the new DAG/report files: **successful**.
 - Alembic `0010 -> 0011 -> 0010 -> 0011` on SQLite with a historical processed batch: **successful**. Upgrade preserved counts/timestamps and mapped `processed` to `success`; downgrade restored the legacy fields/status; the final revision is `0011_durable_batch_states`.
+- Alembic `0011 -> 0012 -> 0011 -> 0012` on SQLite: **successful**. The quarantine table and indexes were created, removed on downgrade, and restored; the final revision is `0012_quarantine_records`. PostgreSQL offline SQL compilation emits `raw_payload JSONB NOT NULL`.
 - Alembic `upgrade -> downgrade 0009 -> upgrade` on SQLite: **successful**, ending at `0010_typed_clinical_dates`.
 - A seeded revision-0008 patient upgraded to `0009` with its source identifier backfilled; a second source then stored the same FHIR patient ID as a separate patient and mapping: **successful**.
 - Seeded legacy string values upgraded through `0010`: valid date-only/UTC/offset/naive ISO values became typed timestamps, invalid and null values became null, all six SQLite columns report `DATETIME`, and downgrade/re-upgrade preserved the converted values: **successful**.
@@ -479,6 +487,8 @@ Backend coverage includes:
 - explicit multi-source identifiers resolving to one manually mapped canonical patient;
 - source systems, ingestion batches, patient identifiers, and curated lineage;
 - durable success/failure batch finalization, rollback of forced mid-ingestion clinical writes, queryable failed state, and sanitized persisted errors;
+- mixed-validity Bundles where malformed supported children are quarantined, valid siblings persist, unsupported types are counted separately, and raw quarantine payloads remain absent from API output;
+- invalid JSON and non-object/non-Bundle top-level uploads remaining batch-fatal without clinical or quarantine rows;
 - date-only, UTC, timezone-offset, empty, null, and invalid temporal parsing;
 - typed ORM persistence with stable UTC ISO API serialization;
 - chronological ordering by actual instant rather than lexical representation;
@@ -496,6 +506,7 @@ Important test boundaries:
 - There are no frontend component/browser tests.
 - There is no automated full PostgreSQL + dbt + FastAPI end-to-end test in the test suite.
 - External FHIR and LLM HTTP calls are mocked.
+- Quarantine runtime behavior is exercised with SQLite JSON; PostgreSQL `JSONB` DDL is compile-validated but was not executed against a live PostgreSQL server for this change.
 - The dbt-shaped API test creates compatible SQLite tables; it does not run dbt SQL.
 - The five timestamp-aware dbt mart expressions were not executed locally because this machine has neither Docker nor a `dbt` executable.
 - For the same reason, the Airflow image was not built and the DAG was not executed against PostgreSQL/dbt on this machine; the automated Change 4 coverage validates its Python contract, commands, Compose structure, and SQLite metrics behavior.
@@ -507,7 +518,7 @@ The most important engineering gaps, in priority order, are:
 
 1. **Production security is not implemented.** Demo users, shared credentials, a default signing secret, readable browser token storage, and no token revocation are intentionally non-production.
 2. **Patient reconciliation is explicit only.** Source-specific identity is implemented, but there is no API/workflow for managing mappings and no deterministic or probabilistic matching across source identifiers. Uploaded and dbt patients also remain separate identity domains.
-3. **FHIR conformance is narrow.** There is no schema/profile validation, reference enforcement, terminology service, paging loop, or broad datatype support.
+3. **FHIR conformance is narrow.** The importer enforces only the selected Patient reference and transformation-required fields; there is no schema/profile validation, general reference graph validation, terminology service, paging loop, or broad datatype support.
 4. **The dormant and active raw/staging designs overlap.** `raw_hospital_*`/ORM staging tables remain in migrations while the live pipeline uses `raw_*` and dbt views.
 5. **dbt batch semantics can mix child history.** Latest patient demographics and all-batch child marts use different selection rules.
 6. **Grounding checks are structural, not entailment checks.** They prove citations resolve, but not that conclusions are clinically correct or fully supported.

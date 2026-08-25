@@ -14,6 +14,7 @@ from app.models.medication_request import MedicationRequest
 from app.models.observation import Observation
 from app.models.patient import Patient
 from app.models.patient_source_identifier import PatientSourceIdentifier
+from app.models.quarantine_record import QuarantineRecord
 from app.models.source_system import SourceSystem
 from app.services.fhir_parser import parse_fhir_bundle
 
@@ -26,6 +27,8 @@ GENERATED_FHIR_SOURCE_MARKER = "clinsight-generated-fhir-bundle"
 SMART_HEALTH_IT_SOURCE_MARKER = "smart-health-it-r4-sandbox"
 SAFE_INGESTION_ERROR_MESSAGES = {
     "No Patient resource found in bundle",
+    "No usable Patient resource found in bundle",
+    "FHIR Bundle entry must be a list",
     "Source patient identifier is already mapped to another canonical patient",
 }
 
@@ -80,9 +83,22 @@ def _ingest_fhir_bundle_clinical(
     patient_payload = parsed_data.get("patient")
 
     if not patient_payload:
-        raise ValueError("No Patient resource found in bundle")
+        raise ValueError("No usable Patient resource found in bundle")
 
     transformed_at = datetime.now(timezone.utc)
+
+    for rejected_resource in parsed_data.get("quarantined_resources", []):
+        db.add(
+            QuarantineRecord(
+                ingestion_batch_id=ingestion_batch.id,
+                source_system_id=source_system.id,
+                resource_type=rejected_resource["resource_type"],
+                source_record_id=rejected_resource.get("source_record_id"),
+                error_code=rejected_resource["error_code"],
+                error_message=rejected_resource["error_message"],
+                raw_payload=rejected_resource["raw_payload"],
+            )
+        )
 
     import_mode = "created"
     fhir_patient_id = patient_payload.get("fhir_patient_id")
@@ -239,12 +255,14 @@ def _ingest_fhir_bundle_clinical(
         )
 
     resource_counts = parsed_data.get("resource_counts", {})
-    record_count = sum(resource_counts.values())
+    record_count = parsed_data.get("record_count", sum(resource_counts.values()))
     accepted_count = _accepted_resource_count(parsed_data)
+    rejected_count = len(parsed_data.get("quarantined_resources", []))
+    unsupported_count = parsed_data.get("unsupported_count", 0)
     ingestion_batch.status = "success"
     ingestion_batch.record_count = record_count
     ingestion_batch.accepted_count = accepted_count
-    ingestion_batch.rejected_count = max(record_count - accepted_count, 0)
+    ingestion_batch.rejected_count = rejected_count
     ingestion_batch.error_message = None
     ingestion_batch.completed_at = datetime.now(timezone.utc)
 
@@ -252,6 +270,11 @@ def _ingest_fhir_bundle_clinical(
         "patient_id": patient.id,
         "import_mode": import_mode,
         "resource_counts": resource_counts,
+        "ingestion_summary": {
+            "accepted": accepted_count,
+            "rejected": rejected_count,
+            "unsupported": unsupported_count,
+        },
     }
     db.commit()
     return result
@@ -262,13 +285,7 @@ def _count_bundle_resources(bundle: Dict[str, Any]) -> int:
     if not isinstance(entries, list):
         return 0
 
-    return sum(
-        1
-        for entry in entries
-        if isinstance(entry, dict)
-        and isinstance(entry.get("resource"), dict)
-        and entry["resource"].get("resourceType")
-    )
+    return len(entries)
 
 
 def _accepted_resource_count(parsed_data: Dict[str, Any]) -> int:

@@ -3,6 +3,22 @@ from typing import Any, Dict, List, Optional
 from app.core.temporal import parse_fhir_datetime
 
 
+SUPPORTED_CHILD_RESOURCE_TYPES = {
+    "Condition",
+    "Observation",
+    "Encounter",
+    "MedicationRequest",
+    "AllergyIntolerance",
+}
+
+
+class RecordValidationError(ValueError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
 def get_first_coding(resource: Dict[str, Any], field_name: str) -> Dict[str, Optional[str]]:
     """
     Extract the first coding code/display from a FHIR CodeableConcept field.
@@ -65,6 +81,9 @@ def extract_patient_reference(reference_obj: Dict[str, Any]) -> Optional[str]:
 
     if ref.startswith("Patient/"):
         return ref.split("/", 1)[1]
+
+    if "/Patient/" in ref:
+        return ref.rsplit("/Patient/", 1)[1]
 
     return ref
 
@@ -196,6 +215,8 @@ def parse_fhir_bundle(bundle: Dict[str, Any]) -> Dict[str, Any]:
     Assumes one main patient per bundle for MVP.
     """
     entries = bundle.get("entry", [])
+    if not isinstance(entries, list):
+        raise ValueError("FHIR Bundle entry must be a list")
 
     patient_data = None
     conditions: List[Dict[str, Any]] = []
@@ -204,33 +225,129 @@ def parse_fhir_bundle(bundle: Dict[str, Any]) -> Dict[str, Any]:
     medication_requests: List[Dict[str, Any]] = []
     allergies: List[Dict[str, Any]] = []
     resource_counts: Dict[str, int] = {}
+    quarantined_resources: List[Dict[str, Any]] = []
+    unsupported_count = 0
+    typed_resources: List[Dict[str, Any]] = []
 
     for entry in entries:
-        resource = entry.get("resource", {})
+        if not isinstance(entry, dict) or not isinstance(entry.get("resource"), dict):
+            quarantined_resources.append(
+                _quarantine_item(
+                    resource_type="Unknown",
+                    source_record_id=None,
+                    error_code="malformed_bundle_entry",
+                    error_message="Bundle entry must contain a JSON resource object.",
+                    raw_payload=entry,
+                )
+            )
+            continue
+
+        resource = entry["resource"]
         resource_type = resource.get("resourceType")
 
-        if not resource_type:
+        if not isinstance(resource_type, str) or not resource_type.strip():
+            quarantined_resources.append(
+                _quarantine_item(
+                    resource_type="Unknown",
+                    source_record_id=_source_record_id(resource),
+                    error_code="missing_resource_type",
+                    error_message="Resource is missing a valid resourceType.",
+                    raw_payload=resource,
+                )
+            )
             continue
 
         resource_counts[resource_type] = resource_counts.get(resource_type, 0) + 1
+        typed_resources.append(resource)
 
-        if resource_type == "Patient" and patient_data is None:
-            patient_data = parse_patient(resource)
+    for resource in typed_resources:
+        if resource["resourceType"] != "Patient":
+            continue
 
-        elif resource_type == "Condition":
-            conditions.append(parse_condition(resource))
+        if patient_data is not None:
+            quarantined_resources.append(
+                _quarantine_item(
+                    resource_type="Patient",
+                    source_record_id=_source_record_id(resource),
+                    error_code="additional_patient_not_supported",
+                    error_message="Only one Patient resource can be ingested per Bundle.",
+                    raw_payload=resource,
+                )
+            )
+            continue
 
-        elif resource_type == "Observation":
-            observations.append(parse_observation(resource))
+        try:
+            patient_data = _parse_patient_resource(resource)
+        except RecordValidationError as exc:
+            quarantined_resources.append(
+                _quarantine_item(
+                    resource_type="Patient",
+                    source_record_id=_source_record_id(resource),
+                    error_code=exc.code,
+                    error_message=exc.message,
+                    raw_payload=resource,
+                )
+            )
+            continue
+        except (AttributeError, TypeError, ValueError):
+            quarantined_resources.append(
+                _quarantine_item(
+                    resource_type="Patient",
+                    source_record_id=_source_record_id(resource),
+                    error_code="malformed_resource",
+                    error_message="Patient structure cannot be transformed by the supported parser.",
+                    raw_payload=resource,
+                )
+            )
+            continue
 
-        elif resource_type == "Encounter":
-            encounters.append(parse_encounter(resource))
+    if patient_data is None:
+        raise ValueError("No usable Patient resource found in bundle")
 
-        elif resource_type == "MedicationRequest":
-            medication_requests.append(parse_medication_request(resource))
+    patient_id = patient_data["fhir_patient_id"]
+    parsed_collections = {
+        "Condition": conditions,
+        "Observation": observations,
+        "Encounter": encounters,
+        "MedicationRequest": medication_requests,
+        "AllergyIntolerance": allergies,
+    }
 
-        elif resource_type == "AllergyIntolerance":
-            allergies.append(parse_allergy_intolerance(resource))
+    for resource in typed_resources:
+        resource_type = resource["resourceType"]
+        if resource_type == "Patient":
+            continue
+
+        if resource_type not in SUPPORTED_CHILD_RESOURCE_TYPES:
+            unsupported_count += 1
+            continue
+
+        try:
+            parsed_resource = _parse_child_resource(resource, patient_id)
+        except RecordValidationError as exc:
+            quarantined_resources.append(
+                _quarantine_item(
+                    resource_type=resource_type,
+                    source_record_id=_source_record_id(resource),
+                    error_code=exc.code,
+                    error_message=exc.message,
+                    raw_payload=resource,
+                )
+            )
+            continue
+        except (AttributeError, TypeError, ValueError):
+            quarantined_resources.append(
+                _quarantine_item(
+                    resource_type=resource_type,
+                    source_record_id=_source_record_id(resource),
+                    error_code="malformed_resource",
+                    error_message="Resource structure cannot be transformed by the supported parser.",
+                    raw_payload=resource,
+                )
+            )
+            continue
+
+        parsed_collections[resource_type].append(parsed_resource)
 
     return {
         "patient": patient_data,
@@ -240,5 +357,156 @@ def parse_fhir_bundle(bundle: Dict[str, Any]) -> Dict[str, Any]:
         "medication_requests": medication_requests,
         "allergies": allergies,
         "resource_counts": resource_counts,
-        "raw_bundle_type": bundle.get("type")
+        "raw_bundle_type": bundle.get("type"),
+        "record_count": len(entries),
+        "unsupported_count": unsupported_count,
+        "quarantined_resources": quarantined_resources,
+    }
+
+
+def _parse_patient_resource(resource: Dict[str, Any]) -> Dict[str, Any]:
+    parsed = parse_patient(resource)
+    if not _nonempty_string(parsed.get("fhir_patient_id")):
+        raise RecordValidationError(
+            "missing_patient_id",
+            "Patient resource is missing a usable id.",
+        )
+    return parsed
+
+
+def _parse_child_resource(resource: Dict[str, Any], patient_id: str) -> Dict[str, Any]:
+    resource_type = resource["resourceType"]
+    if not _nonempty_string(resource.get("id")):
+        raise RecordValidationError(
+            "missing_resource_id",
+            f"{resource_type} resource is missing a usable id.",
+        )
+
+    parser = {
+        "Condition": parse_condition,
+        "Observation": parse_observation,
+        "Encounter": parse_encounter,
+        "MedicationRequest": parse_medication_request,
+        "AllergyIntolerance": parse_allergy_intolerance,
+    }[resource_type]
+    parsed = parser(resource)
+    _validate_patient_reference(resource_type, parsed.get("patient_reference"), patient_id)
+
+    if resource_type == "Condition":
+        _require_code(resource_type, parsed.get("condition_code"), parsed.get("condition_name"))
+        _validate_optional_datetime(resource, "onsetDateTime", parsed.get("onset_date"))
+    elif resource_type == "Observation":
+        _require_code(resource_type, parsed.get("observation_code"), parsed.get("observation_name"))
+        _validate_observation_value(resource, parsed.get("value"))
+        _validate_optional_datetime(resource, "effectiveDateTime", parsed.get("effective_date"))
+    elif resource_type == "Encounter":
+        _require_field(resource_type, "status", parsed.get("status"))
+        period = resource.get("period", {})
+        if period is not None and not isinstance(period, dict):
+            raise RecordValidationError(
+                "malformed_period",
+                "Encounter period must be a JSON object when supplied.",
+            )
+        _validate_optional_datetime(period or {}, "start", parsed.get("period_start"))
+        _validate_optional_datetime(period or {}, "end", parsed.get("period_end"))
+    elif resource_type == "MedicationRequest":
+        _require_field(resource_type, "status", parsed.get("status"))
+        _require_field(resource_type, "intent", parsed.get("intent"))
+        _require_code(resource_type, parsed.get("medication_code"), parsed.get("medication_name"))
+        _validate_optional_datetime(resource, "authoredOn", parsed.get("authored_on"))
+    elif resource_type == "AllergyIntolerance":
+        _require_code(resource_type, parsed.get("allergy_code"), parsed.get("allergy_name"))
+        _validate_optional_datetime(resource, "recordedDate", parsed.get("recorded_date"))
+
+    return parsed
+
+
+def _validate_patient_reference(
+    resource_type: str,
+    patient_reference: Optional[str],
+    patient_id: str,
+) -> None:
+    if not _nonempty_string(patient_reference):
+        raise RecordValidationError(
+            "missing_patient_reference",
+            f"{resource_type} resource is missing a patient reference.",
+        )
+    if patient_reference != patient_id:
+        raise RecordValidationError(
+            "patient_reference_mismatch",
+            f"{resource_type} resource references a different Patient.",
+        )
+
+
+def _require_code(resource_type: str, code: Any, display: Any) -> None:
+    if not _nonempty_string(code) and not _nonempty_string(display):
+        raise RecordValidationError(
+            "missing_required_code",
+            f"{resource_type} resource is missing a transformable code or display.",
+        )
+
+
+def _require_field(resource_type: str, field_name: str, value: Any) -> None:
+    if not _nonempty_string(value):
+        raise RecordValidationError(
+            f"missing_{field_name}",
+            f"{resource_type} resource is missing required field {field_name}.",
+        )
+
+
+def _validate_observation_value(resource: Dict[str, Any], parsed_value: Any) -> None:
+    if "valueQuantity" in resource:
+        quantity = resource.get("valueQuantity")
+        if not isinstance(quantity, dict) or quantity.get("value") is None:
+            raise RecordValidationError(
+                "invalid_observation_value",
+                "Observation valueQuantity must contain a value.",
+            )
+    elif "valueString" in resource:
+        if not _nonempty_string(parsed_value):
+            raise RecordValidationError(
+                "invalid_observation_value",
+                "Observation valueString must contain a value.",
+            )
+    else:
+        raise RecordValidationError(
+            "unsupported_observation_value",
+            "Observation value representation is not supported.",
+        )
+
+
+def _validate_optional_datetime(
+    container: Dict[str, Any],
+    field_name: str,
+    parsed_value: Any,
+) -> None:
+    if field_name in container and container.get(field_name) is not None and parsed_value is None:
+        raise RecordValidationError(
+            "invalid_datetime",
+            f"Field {field_name} is not a supported FHIR date or dateTime.",
+        )
+
+
+def _source_record_id(resource: Dict[str, Any]) -> Optional[str]:
+    resource_id = resource.get("id")
+    return resource_id if isinstance(resource_id, str) else None
+
+
+def _nonempty_string(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _quarantine_item(
+    resource_type: str,
+    source_record_id: Optional[str],
+    error_code: str,
+    error_message: str,
+    raw_payload: Any,
+) -> Dict[str, Any]:
+    return {
+        "resource_type": resource_type,
+        "source_record_id": source_record_id,
+        "error_code": error_code,
+        "error_message": error_message,
+        "raw_payload": raw_payload,
     }

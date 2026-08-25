@@ -21,6 +21,7 @@ from app.models.audit_log import AuditLog
 from app.models.curated_record_source import CuratedRecordSource
 from app.models.ingestion_batch import IngestionBatch
 from app.models.patient_source_identifier import PatientSourceIdentifier
+from app.models.quarantine_record import QuarantineRecord
 from app.models.raw_hospital import (
     RawHospitalAllergy,
     RawHospitalDiagnosis,

@@ -74,6 +74,31 @@ def test_parse_fhir_bundle_handles_codeable_concept_lists():
     assert parsed["encounters"][0]["encounter_type"] == "Encounter for check up"
 
 
+def test_parse_fhir_bundle_separates_invalid_and_unsupported_child_resources():
+    bundle = json.loads(SAMPLE_BUNDLE_PATH.read_text(encoding="utf-8"))
+    invalid_observation = next(
+        entry["resource"]
+        for entry in bundle["entry"]
+        if entry["resource"].get("id") == "observation-001"
+    )
+    invalid_observation["effectiveDateTime"] = "not-a-fhir-date"
+    bundle["entry"].append(
+        {"resource": {"resourceType": "Practitioner", "id": "unsupported-001"}}
+    )
+
+    parsed = parse_fhir_bundle(bundle)
+
+    assert parsed["record_count"] == 9
+    assert parsed["unsupported_count"] == 1
+    assert len(parsed["observations"]) == 1
+    assert len(parsed["quarantined_resources"]) == 1
+    rejected = parsed["quarantined_resources"][0]
+    assert rejected["resource_type"] == "Observation"
+    assert rejected["source_record_id"] == "observation-001"
+    assert rejected["error_code"] == "invalid_datetime"
+    assert rejected["raw_payload"]["effectiveDateTime"] == "not-a-fhir-date"
+
+
 @pytest.mark.parametrize(
     ("raw_value", "expected"),
     [

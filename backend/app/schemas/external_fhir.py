@@ -22,5 +22,6 @@ class ExternalFhirImportResponse(BaseModel):
     patient_id: int
     import_mode: str
     resource_counts: dict[str, int]
+    ingestion_summary: dict[str, int]
     source_system: str
     external_patient_id: str

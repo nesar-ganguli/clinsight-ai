@@ -84,6 +84,11 @@ export type UploadResponse = {
   patient_id: number;
   import_mode: "created" | "updated";
   resource_counts: Record<string, number>;
+  ingestion_summary: {
+    accepted: number;
+    rejected: number;
+    unsupported: number;
+  };
 };
 
 export type ExternalFhirPatientSummary = {

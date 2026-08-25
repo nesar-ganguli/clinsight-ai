@@ -61,6 +61,14 @@ class AllergyIntoleranceSchema(BaseModel):
     recorded_date: Optional[datetime]
 
 
+class QuarantinedResourceSchema(BaseModel):
+    resource_type: str
+    source_record_id: Optional[str]
+    error_code: str
+    error_message: str
+    raw_payload: Any
+
+
 class ParsedFHIRBundleResponse(BaseModel):
     patient: Optional[PatientSchema]
     conditions: List[ConditionSchema]
@@ -70,3 +78,6 @@ class ParsedFHIRBundleResponse(BaseModel):
     allergies: List[AllergyIntoleranceSchema]
     resource_counts: Dict[str, int]
     raw_bundle_type: Optional[str]
+    record_count: int
+    unsupported_count: int
+    quarantined_resources: List[QuarantinedResourceSchema]

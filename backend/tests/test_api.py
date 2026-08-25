@@ -2,6 +2,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+import pytest
 from sqlalchemy import text
 
 from app.core.database import SessionLocal
@@ -15,6 +16,7 @@ from app.models.medication_request import MedicationRequest
 from app.models.observation import Observation
 from app.models.patient import Patient
 from app.models.patient_source_identifier import PatientSourceIdentifier
+from app.models.quarantine_record import QuarantineRecord
 from app.models.source_system import SourceSystem
 from app.services import ingestion as ingestion_service
 
@@ -98,6 +100,35 @@ def test_upload_bundle_creates_patient_record(client):
     assert len(patient_payload["encounters"]) == 1
     assert len(patient_payload["medication_requests"]) == 1
     assert len(patient_payload["allergies"]) == 1
+
+
+@pytest.mark.parametrize(
+    ("content", "expected_detail"),
+    [
+        ("{not-json", "Invalid JSON file"),
+        (json.dumps([]), "Uploaded JSON is not a FHIR Bundle"),
+        (
+            json.dumps({"resourceType": "Patient", "id": "not-a-bundle"}),
+            "Uploaded JSON is not a FHIR Bundle",
+        ),
+    ],
+)
+def test_transport_level_upload_errors_are_batch_fatal(client, content, expected_detail):
+    response = client.post(
+        "/api/upload",
+        files={"file": ("invalid.json", content, "application/json")},
+        headers=auth_headers(client),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == expected_detail
+
+    db = SessionLocal()
+    try:
+        assert db.query(IngestionBatch).count() == 0
+        assert db.query(QuarantineRecord).count() == 0
+    finally:
+        db.close()
 
 
 def test_uploading_same_bundle_twice_upserts_without_duplicates(client):
@@ -433,7 +464,7 @@ def test_failed_ingestion_batch_persists_when_bundle_has_no_patient(client):
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "No Patient resource found in bundle"
+    assert response.json()["detail"] == "No usable Patient resource found in bundle"
 
     db = SessionLocal()
     try:
@@ -442,11 +473,12 @@ def test_failed_ingestion_batch_persists_when_bundle_has_no_patient(client):
         assert ingestion_batch.record_count == 1
         assert ingestion_batch.accepted_count == 0
         assert ingestion_batch.rejected_count == 1
-        assert ingestion_batch.error_message == "No Patient resource found in bundle"
+        assert ingestion_batch.error_message == "No usable Patient resource found in bundle"
         assert ingestion_batch.started_at is not None
         assert ingestion_batch.completed_at is not None
         assert db.query(Patient).count() == 0
         assert db.query(CuratedRecordSource).count() == 0
+        assert db.query(QuarantineRecord).count() == 0
     finally:
         db.close()
 
@@ -497,6 +529,84 @@ def test_clinical_records_roll_back_while_failed_batch_and_sanitized_error_persi
         db.close()
 
 
+def test_malformed_children_are_quarantined_while_valid_records_continue(client):
+    bundle = load_sample_bundle()
+    invalid_date_observation = find_resource(bundle, "Observation", "observation-001")
+    invalid_date_observation["effectiveDateTime"] = "not-a-fhir-date"
+    invalid_date_observation["note"] = [{"text": "sensitive review detail"}]
+
+    unsupported_value_observation = find_resource(bundle, "Observation", "observation-002")
+    unsupported_value_observation.pop("valueQuantity")
+    unsupported_value_observation["valueCodeableConcept"] = {
+        "text": "representation not supported by this importer"
+    }
+
+    bundle["entry"].append(
+        {
+            "resource": {
+                "resourceType": "Practitioner",
+                "id": "practitioner-unsupported-001",
+                "name": [{"text": "Unsupported Resource"}],
+            }
+        }
+    )
+
+    response = client.post(
+        "/api/upload",
+        files={"file": ("mixed-validity.json", json.dumps(bundle), "application/json")},
+        headers=auth_headers(client),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ingestion_summary"] == {
+        "accepted": 6,
+        "rejected": 2,
+        "unsupported": 1,
+    }
+    assert "raw_payload" not in response.text
+    assert "sensitive review detail" not in response.text
+
+    patient_response = client.get(
+        f"/api/patients/{payload['patient_id']}",
+        headers=auth_headers(client, "clinician"),
+    )
+    assert patient_response.status_code == 200
+    patient = patient_response.json()
+    assert len(patient["conditions"]) == 2
+    assert len(patient["observations"]) == 0
+    assert len(patient["encounters"]) == 1
+    assert len(patient["medication_requests"]) == 1
+    assert len(patient["allergies"]) == 1
+
+    db = SessionLocal()
+    try:
+        ingestion_batch = db.query(IngestionBatch).one()
+        quarantine_records = db.query(QuarantineRecord).order_by(QuarantineRecord.id).all()
+
+        assert ingestion_batch.status == "success"
+        assert ingestion_batch.record_count == 9
+        assert ingestion_batch.accepted_count == 6
+        assert ingestion_batch.rejected_count == 2
+        assert len(quarantine_records) == 2
+        assert {record.error_code for record in quarantine_records} == {
+            "invalid_datetime",
+            "unsupported_observation_value",
+        }
+        assert {record.source_record_id for record in quarantine_records} == {
+            "observation-001",
+            "observation-002",
+        }
+        assert all(record.resource_type == "Observation" for record in quarantine_records)
+        assert all(record.source_system_id == ingestion_batch.source_system_id for record in quarantine_records)
+        assert all(record.ingestion_batch_id == ingestion_batch.id for record in quarantine_records)
+        assert quarantine_records[0].raw_payload["resourceType"] == "Observation"
+        assert "sensitive review detail" in json.dumps(quarantine_records[0].raw_payload)
+        assert db.query(CuratedRecordSource).count() == 6
+    finally:
+        db.close()
+
+
 def test_upload_serializes_typed_clinical_dates_as_iso_values(client):
     bundle = load_sample_bundle()
     find_resource(bundle, "Condition", "condition-001")["onsetDateTime"] = "2026-04-01"
@@ -507,7 +617,7 @@ def test_upload_serializes_typed_clinical_dates_as_iso_values(client):
     encounter["period"]["start"] = "2026-04-01T10:30:00-04:00"
     encounter["period"]["end"] = None
     find_resource(bundle, "MedicationRequest", "medicationrequest-001")["authoredOn"] = None
-    find_resource(bundle, "AllergyIntolerance", "allergy-001")["recordedDate"] = "invalid-date"
+    find_resource(bundle, "AllergyIntolerance", "allergy-001")["recordedDate"] = None
 
     upload_response = client.post(
         "/api/upload",
@@ -596,6 +706,8 @@ def test_quality_alerts_surface_structured_rules(client):
         files={"file": ("patient_bundle_1.json", json.dumps(bundle), "application/json")},
         headers=auth_headers(client),
     )
+    assert upload_response.status_code == 200
+    assert upload_response.json()["ingestion_summary"]["rejected"] == 1
     patient_id = upload_response.json()["patient_id"]
 
     response = client.get(f"/api/patients/{patient_id}/quality-alerts", headers=auth_headers(client, "reviewer"))
@@ -605,7 +717,7 @@ def test_quality_alerts_surface_structured_rules(client):
 
     assert payload["patient_id"] == patient_id
     assert any(alert["code"] == "missing_patient_gender" for alert in payload["alerts"])
-    assert any(alert["code"] == "missing_observation_value" for alert in payload["alerts"])
+    assert not any(alert["code"] == "missing_observation_value" for alert in payload["alerts"])
 
 
 def test_ai_insights_endpoint_returns_cited_report(client):

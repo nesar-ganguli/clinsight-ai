@@ -18,7 +18,7 @@ async def upload_fhir_bundle(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles("admin", "data_reviewer")),
 ):
-    if not file.filename.endswith(".json"):
+    if not file.filename or not file.filename.endswith(".json"):
         raise HTTPException(status_code=400, detail="Only JSON files are supported")
 
     try:
@@ -29,7 +29,7 @@ async def upload_fhir_bundle(
     except UnicodeDecodeError:
         raise HTTPException(status_code=400, detail="Could not decode file as UTF-8")
 
-    if bundle.get("resourceType") != "Bundle":
+    if not isinstance(bundle, dict) or bundle.get("resourceType") != "Bundle":
         raise HTTPException(status_code=400, detail="Uploaded JSON is not a FHIR Bundle")
 
     try:
@@ -47,6 +47,7 @@ async def upload_fhir_bundle(
                 "patient_id": result["patient_id"],
                 "import_mode": result["import_mode"],
                 "resource_counts": result["resource_counts"],
+                "ingestion_summary": result["ingestion_summary"],
             },
         )
     except ValueError as exc:

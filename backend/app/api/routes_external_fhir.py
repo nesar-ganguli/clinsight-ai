@@ -88,6 +88,7 @@ def import_smart_patient(
             "patient_id": result["patient_id"],
             "import_mode": result["import_mode"],
             "resource_counts": result["resource_counts"],
+            "ingestion_summary": result["ingestion_summary"],
         },
     )
 
