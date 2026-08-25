@@ -20,7 +20,7 @@ class Condition(Base):
     condition_code = Column(String(100), nullable=True, index=True)
     condition_name = Column(String(255), nullable=True)
     clinical_status = Column(String(100), nullable=True)
-    onset_date = Column(String(64), nullable=True)
+    onset_date = Column(DateTime(timezone=True), nullable=True)
     source_type = Column(String(100), nullable=True, index=True)
     source_system = Column(String(255), nullable=True)
     source_record_id = Column(String(255), nullable=True, index=True)

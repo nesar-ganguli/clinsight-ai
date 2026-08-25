@@ -1,6 +1,10 @@
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
+from app.core.temporal import parse_fhir_datetime
 from app.services.fhir_parser import parse_fhir_bundle
 
 
@@ -25,6 +29,10 @@ def test_parse_fhir_bundle_extracts_supported_resources():
     assert parsed["resource_counts"]["Encounter"] == 1
     assert parsed["resource_counts"]["MedicationRequest"] == 1
     assert parsed["resource_counts"]["AllergyIntolerance"] == 1
+    assert parsed["conditions"][0]["onset_date"] == datetime(2024, 5, 1, tzinfo=timezone.utc)
+    assert parsed["observations"][0]["effective_date"] == datetime(
+        2026, 3, 15, 10, 30, tzinfo=timezone.utc
+    )
 
 
 def test_parse_fhir_bundle_handles_codeable_concept_lists():
@@ -64,3 +72,19 @@ def test_parse_fhir_bundle_handles_codeable_concept_lists():
     parsed = parse_fhir_bundle(bundle)
 
     assert parsed["encounters"][0]["encounter_type"] == "Encounter for check up"
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        ("2026-04-01", datetime(2026, 4, 1, tzinfo=timezone.utc)),
+        ("2026-04-01T14:30:00Z", datetime(2026, 4, 1, 14, 30, tzinfo=timezone.utc)),
+        ("2026-04-01T10:30:00-04:00", datetime(2026, 4, 1, 14, 30, tzinfo=timezone.utc)),
+        (None, None),
+        ("", None),
+        ("not-a-clinical-date", None),
+        ("2026-99-01", None),
+    ],
+)
+def test_parse_fhir_datetime_normalizes_supported_values(raw_value, expected):
+    assert parse_fhir_datetime(raw_value) == expected

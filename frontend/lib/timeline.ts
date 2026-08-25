@@ -1,4 +1,5 @@
 import { Patient } from "@/lib/types";
+import { compareClinicalDatesDescending } from "@/lib/date-time";
 
 type TimelineItem = {
   id: string;
@@ -53,5 +54,5 @@ export function buildTimeline(patient: Patient): TimelineItem[] {
     })),
   ];
 
-  return items.sort((left, right) => right.date.localeCompare(left.date));
+  return items.sort((left, right) => compareClinicalDatesDescending(left.date, right.date));
 }

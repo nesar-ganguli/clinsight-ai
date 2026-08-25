@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, List, Optional
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from app.core.database import SessionLocal
+from app.core.temporal import format_fhir_datetime
 from app.services.clinical_records import get_patient_record, list_patient_records
 
 
@@ -105,10 +106,12 @@ def _encounter_resource(encounter, patient_fhir_id: str) -> Dict[str, Any]:
         resource["type"] = _codeable_concept(None, encounter.encounter_type)
 
     period = {}
-    if getattr(encounter, "period_start", None):
-        period["start"] = encounter.period_start
-    if getattr(encounter, "period_end", None):
-        period["end"] = encounter.period_end
+    period_start = format_fhir_datetime(getattr(encounter, "period_start", None))
+    period_end = format_fhir_datetime(getattr(encounter, "period_end", None))
+    if period_start:
+        period["start"] = period_start
+    if period_end:
+        period["end"] = period_end
     if period:
         resource["period"] = period
 
@@ -127,8 +130,9 @@ def _condition_resource(condition, patient_fhir_id: str) -> Dict[str, Any]:
     }
     if getattr(condition, "clinical_status", None):
         resource["clinicalStatus"] = _codeable_concept(condition.clinical_status, condition.clinical_status)
-    if getattr(condition, "onset_date", None):
-        resource["onsetDateTime"] = condition.onset_date
+    onset_date = format_fhir_datetime(getattr(condition, "onset_date", None))
+    if onset_date:
+        resource["onsetDateTime"] = onset_date
     return resource
 
 
@@ -143,8 +147,9 @@ def _observation_resource(observation, patient_fhir_id: str) -> Dict[str, Any]:
             getattr(observation, "observation_name", None),
         ),
     }
-    if getattr(observation, "effective_date", None):
-        resource["effectiveDateTime"] = observation.effective_date
+    effective_date = format_fhir_datetime(getattr(observation, "effective_date", None))
+    if effective_date:
+        resource["effectiveDateTime"] = effective_date
 
     value = getattr(observation, "value", None)
     if value is not None and str(value).strip() != "":
@@ -172,8 +177,9 @@ def _medication_request_resource(medication, patient_fhir_id: str) -> Dict[str, 
             getattr(medication, "medication_name", None),
         ),
     }
-    if getattr(medication, "authored_on", None):
-        resource["authoredOn"] = medication.authored_on
+    authored_on = format_fhir_datetime(getattr(medication, "authored_on", None))
+    if authored_on:
+        resource["authoredOn"] = authored_on
     return resource
 
 
@@ -193,8 +199,9 @@ def _allergy_resource(allergy, patient_fhir_id: str) -> Dict[str, Any]:
         resource["verificationStatus"] = _codeable_concept(allergy.verification_status, allergy.verification_status)
     if getattr(allergy, "criticality", None):
         resource["criticality"] = allergy.criticality
-    if getattr(allergy, "recorded_date", None):
-        resource["recordedDate"] = allergy.recorded_date
+    recorded_date = format_fhir_datetime(getattr(allergy, "recorded_date", None))
+    if recorded_date:
+        resource["recordedDate"] = recorded_date
     return resource
 
 

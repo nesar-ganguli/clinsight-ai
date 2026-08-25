@@ -6,6 +6,7 @@ from sqlalchemy import inspect, or_, text
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import settings
+from app.core.temporal import parse_fhir_datetime
 from app.models.patient import Patient
 
 
@@ -191,7 +192,7 @@ def _condition_row(row) -> Dict[str, Any]:
         "condition_code": row.get("condition_code"),
         "condition_name": row.get("condition_name"),
         "clinical_status": row.get("clinical_status"),
-        "onset_date": _as_text(row.get("onset_date")),
+        "onset_date": parse_fhir_datetime(row.get("onset_date")),
         **_source_metadata(row),
     }
 
@@ -204,7 +205,7 @@ def _observation_row(row) -> Dict[str, Any]:
         "observation_name": row.get("observation_name"),
         "value": row.get("value"),
         "unit": row.get("unit"),
-        "effective_date": _as_text(row.get("effective_date")),
+        "effective_date": parse_fhir_datetime(row.get("effective_date")),
         **_source_metadata(row),
     }
 
@@ -216,8 +217,8 @@ def _encounter_row(row) -> Dict[str, Any]:
         "status": row.get("status"),
         "encounter_class": row.get("encounter_class"),
         "encounter_type": row.get("encounter_type"),
-        "period_start": _as_text(row.get("period_start")),
-        "period_end": _as_text(row.get("period_end")),
+        "period_start": parse_fhir_datetime(row.get("period_start")),
+        "period_end": parse_fhir_datetime(row.get("period_end")),
         **_source_metadata(row),
     }
 
@@ -230,7 +231,7 @@ def _medication_row(row) -> Dict[str, Any]:
         "intent": row.get("intent"),
         "medication_code": row.get("medication_code"),
         "medication_name": row.get("medication_name"),
-        "authored_on": _as_text(row.get("authored_on")),
+        "authored_on": parse_fhir_datetime(row.get("authored_on")),
         **_source_metadata(row),
     }
 
@@ -244,7 +245,7 @@ def _allergy_row(row) -> Dict[str, Any]:
         "allergy_code": row.get("allergy_code"),
         "allergy_name": row.get("allergy_name"),
         "criticality": row.get("criticality"),
-        "recorded_date": _as_text(row.get("recorded_date")),
+        "recorded_date": parse_fhir_datetime(row.get("recorded_date")),
         **_source_metadata(row),
     }
 
@@ -260,7 +261,12 @@ def _source_metadata(row) -> Dict[str, Any]:
 
 
 def _namespace(row: Any) -> SimpleNamespace:
-    return SimpleNamespace(**{key: _as_text(value) for key, value in dict(row).items()})
+    return SimpleNamespace(
+        **{
+            key: value.isoformat() if isinstance(value, date) and not isinstance(value, datetime) else value
+            for key, value in dict(row).items()
+        }
+    )
 
 
 def _as_text(value: Any) -> Any:

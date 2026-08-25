@@ -11,7 +11,7 @@ select
     lab_name as observation_name,
     result_value as value,
     result_unit as unit,
-    coalesce(resulted_at, collected_at) as effective_date,
+    timezone('UTC', coalesce(resulted_at, collected_at)) as effective_date,
     case
         when result_status in ('final', 'corrected', 'preliminary', 'amended') then result_status
         else 'unknown'

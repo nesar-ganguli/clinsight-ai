@@ -14,7 +14,7 @@ select
     'order' as intent,
     medication_code,
     medication_name,
-    ordered_at as authored_on,
+    timezone('UTC', ordered_at) as authored_on,
     'hospital_database'::text as source_type,
     source_system,
     medication_source_id as source_record_id,

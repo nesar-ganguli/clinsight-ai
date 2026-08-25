@@ -19,7 +19,7 @@ select
         when severity = 'mild' then 'low'
         else 'unable-to-assess'
     end as criticality,
-    recorded_at as recorded_date,
+    timezone('UTC', recorded_at) as recorded_date,
     'hospital_database'::text as source_type,
     source_system,
     allergy_source_id as source_record_id,

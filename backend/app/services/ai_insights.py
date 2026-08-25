@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
+from app.core.temporal import format_fhir_datetime, parse_fhir_datetime, temporal_sort_key
 from app.services.quality_checker import run_quality_checks
 
 
@@ -50,6 +51,7 @@ class InsightBuilder:
         )
 
     def cite_condition(self, condition) -> str:
+        onset_date = _string_or_none(condition.onset_date)
         return self._add_citation(
             resource_type="Condition",
             record_id=condition.id,
@@ -60,13 +62,14 @@ class InsightBuilder:
                 condition.condition_name,
                 condition.condition_code,
                 f"status {condition.clinical_status}" if condition.clinical_status else None,
-                f"onset {condition.onset_date}" if condition.onset_date else None,
+                f"onset {onset_date}" if onset_date else None,
             ),
             source_record=condition,
         )
 
     def cite_observation(self, observation) -> str:
         value = _format_value(observation.value, observation.unit)
+        effective_date = _string_or_none(observation.effective_date)
         return self._add_citation(
             resource_type="Observation",
             record_id=observation.id,
@@ -77,12 +80,14 @@ class InsightBuilder:
                 observation.observation_name,
                 observation.observation_code,
                 value,
-                f"effective {observation.effective_date}" if observation.effective_date else None,
+                f"effective {effective_date}" if effective_date else None,
             ),
             source_record=observation,
         )
 
     def cite_encounter(self, encounter) -> str:
+        period_start = _string_or_none(encounter.period_start)
+        period_end = _string_or_none(encounter.period_end)
         return self._add_citation(
             resource_type="Encounter",
             record_id=encounter.id,
@@ -93,13 +98,14 @@ class InsightBuilder:
                 encounter.encounter_type,
                 f"status {encounter.status}" if encounter.status else None,
                 f"class {encounter.encounter_class}" if encounter.encounter_class else None,
-                f"start {encounter.period_start}" if encounter.period_start else None,
-                f"end {encounter.period_end}" if encounter.period_end else None,
+                f"start {period_start}" if period_start else None,
+                f"end {period_end}" if period_end else None,
             ),
             source_record=encounter,
         )
 
     def cite_medication(self, medication) -> str:
+        authored_on = _string_or_none(medication.authored_on)
         return self._add_citation(
             resource_type="MedicationRequest",
             record_id=medication.id,
@@ -111,7 +117,7 @@ class InsightBuilder:
                 medication.medication_code,
                 f"status {medication.status}" if medication.status else None,
                 f"intent {medication.intent}" if medication.intent else None,
-                f"authored {medication.authored_on}" if medication.authored_on else None,
+                f"authored {authored_on}" if authored_on else None,
             ),
             source_record=medication,
         )
@@ -139,7 +145,7 @@ class InsightBuilder:
         record_id: int,
         fhir_id: Optional[str],
         label: str,
-        date: Optional[str],
+        date: Any,
         excerpt: str,
         source_record: Any,
     ) -> str:
@@ -151,7 +157,7 @@ class InsightBuilder:
                 "record_id": record_id,
                 "fhir_id": fhir_id,
                 "label": label,
-                "date": date,
+                "date": _string_or_none(date),
                 "excerpt": excerpt,
                 **_source_metadata(source_record),
             }
@@ -210,7 +216,8 @@ def _build_summary_sections(patient, builder: InsightBuilder) -> List[Dict[str, 
         condition_claims = []
         for index, condition in enumerate(_sort_by_date(active_conditions, "onset_date")[:5], start=1):
             status = condition.clinical_status or "unspecified status"
-            onset = f" with onset {condition.onset_date}" if condition.onset_date else ""
+            onset_date = _string_or_none(condition.onset_date)
+            onset = f" with onset {onset_date}" if onset_date else ""
             condition_claims.append(
                 _claim(
                     f"condition-{index}",
@@ -238,7 +245,8 @@ def _build_summary_sections(patient, builder: InsightBuilder) -> List[Dict[str, 
         observation_claims = []
         for index, observation in enumerate(latest_observations, start=1):
             value = _format_value(observation.value, observation.unit) or "no value"
-            date = f" on {observation.effective_date}" if observation.effective_date else ""
+            effective_date = _string_or_none(observation.effective_date)
+            date = f" on {effective_date}" if effective_date else ""
             observation_claims.append(
                 _claim(
                     f"observation-{index}",
@@ -252,7 +260,8 @@ def _build_summary_sections(patient, builder: InsightBuilder) -> List[Dict[str, 
     if medications:
         medication_claims = []
         for index, medication in enumerate(_sort_by_date(medications, "authored_on")[:5], start=1):
-            authored = f" authored on {medication.authored_on}" if medication.authored_on else ""
+            authored_on = _string_or_none(medication.authored_on)
+            authored = f" authored on {authored_on}" if authored_on else ""
             medication_claims.append(
                 _claim(
                     f"medication-{index}",
@@ -565,7 +574,7 @@ def _active_medications(medications: Iterable[Any]) -> List[Any]:
 
 
 def _sort_by_date(records: Iterable[Any], attr_name: str) -> List[Any]:
-    return sorted(records, key=lambda record: getattr(record, attr_name) or "", reverse=True)
+    return sorted(records, key=lambda record: temporal_sort_key(getattr(record, attr_name, None)), reverse=True)
 
 
 def _format_value(value: Optional[str], unit: Optional[str]) -> Optional[str]:
@@ -589,8 +598,8 @@ def _source_metadata(record: Any) -> Dict[str, Optional[str]]:
 def _string_or_none(value: Any) -> Optional[str]:
     if value is None:
         return None
-    if hasattr(value, "isoformat"):
-        return value.isoformat()
+    if isinstance(value, datetime):
+        return format_fhir_datetime(value)
     return str(value)
 
 
@@ -606,25 +615,12 @@ def _lower(value: Optional[str]) -> Optional[str]:
     return normalized or None
 
 
-def _is_after(left: Optional[str], right: Optional[str]) -> bool:
-    left_date = _parse_datetime(left)
-    right_date = _parse_datetime(right)
+def _is_after(left: Any, right: Any) -> bool:
+    left_date = parse_fhir_datetime(left)
+    right_date = parse_fhir_datetime(right)
     if not left_date or not right_date:
         return False
     return left_date > right_date
-
-
-def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
-    if not value:
-        return None
-    try:
-        normalized = value.replace("Z", "+00:00")
-        parsed = datetime.fromisoformat(normalized)
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed
-    except ValueError:
-        return None
 
 
 def _matches_condition(condition, codes: Set[str], terms: Sequence[str]) -> bool:

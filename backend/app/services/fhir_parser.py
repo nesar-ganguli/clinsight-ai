@@ -1,5 +1,7 @@
 from typing import Any, Dict, List, Optional
 
+from app.core.temporal import parse_fhir_datetime
+
 
 def get_first_coding(resource: Dict[str, Any], field_name: str) -> Dict[str, Optional[str]]:
     """
@@ -79,7 +81,7 @@ def parse_patient(resource: Dict[str, Any]) -> Dict[str, Optional[str]]:
     }
 
 
-def parse_condition(resource: Dict[str, Any]) -> Dict[str, Optional[str]]:
+def parse_condition(resource: Dict[str, Any]) -> Dict[str, Any]:
     """
     Normalize a FHIR Condition resource.
     """
@@ -100,11 +102,11 @@ def parse_condition(resource: Dict[str, Any]) -> Dict[str, Optional[str]]:
         "condition_code": code_data.get("code"),
         "condition_name": code_data.get("display"),
         "clinical_status": clinical_status,
-        "onset_date": resource.get("onsetDateTime")
+        "onset_date": parse_fhir_datetime(resource.get("onsetDateTime"))
     }
 
 
-def parse_observation(resource: Dict[str, Any]) -> Dict[str, Optional[str]]:
+def parse_observation(resource: Dict[str, Any]) -> Dict[str, Any]:
     """
     Normalize a FHIR Observation resource.
     Supports valueQuantity and valueString for now.
@@ -130,11 +132,11 @@ def parse_observation(resource: Dict[str, Any]) -> Dict[str, Optional[str]]:
         "observation_name": code_data.get("display"),
         "value": value,
         "unit": unit,
-        "effective_date": resource.get("effectiveDateTime")
+        "effective_date": parse_fhir_datetime(resource.get("effectiveDateTime"))
     }
 
 
-def parse_encounter(resource: Dict[str, Any]) -> Dict[str, Optional[str]]:
+def parse_encounter(resource: Dict[str, Any]) -> Dict[str, Any]:
     encounter_type = get_first_coding(resource, "type")
     encounter_class = resource.get("class", {})
 
@@ -144,12 +146,12 @@ def parse_encounter(resource: Dict[str, Any]) -> Dict[str, Optional[str]]:
         "status": resource.get("status"),
         "encounter_class": encounter_class.get("code") or encounter_class.get("display"),
         "encounter_type": encounter_type.get("display"),
-        "period_start": resource.get("period", {}).get("start"),
-        "period_end": resource.get("period", {}).get("end")
+        "period_start": parse_fhir_datetime(resource.get("period", {}).get("start")),
+        "period_end": parse_fhir_datetime(resource.get("period", {}).get("end"))
     }
 
 
-def parse_medication_request(resource: Dict[str, Any]) -> Dict[str, Optional[str]]:
+def parse_medication_request(resource: Dict[str, Any]) -> Dict[str, Any]:
     medication_data = get_first_coding(resource, "medicationCodeableConcept")
 
     return {
@@ -159,11 +161,11 @@ def parse_medication_request(resource: Dict[str, Any]) -> Dict[str, Optional[str
         "intent": resource.get("intent"),
         "medication_code": medication_data.get("code"),
         "medication_name": medication_data.get("display"),
-        "authored_on": resource.get("authoredOn")
+        "authored_on": parse_fhir_datetime(resource.get("authoredOn"))
     }
 
 
-def parse_allergy_intolerance(resource: Dict[str, Any]) -> Dict[str, Optional[str]]:
+def parse_allergy_intolerance(resource: Dict[str, Any]) -> Dict[str, Any]:
     allergy_data = get_first_coding(resource, "code")
 
     clinical_status = None
@@ -184,7 +186,7 @@ def parse_allergy_intolerance(resource: Dict[str, Any]) -> Dict[str, Optional[st
         "allergy_code": allergy_data.get("code"),
         "allergy_name": allergy_data.get("display"),
         "criticality": resource.get("criticality"),
-        "recorded_date": resource.get("recordedDate")
+        "recorded_date": parse_fhir_datetime(resource.get("recordedDate"))
     }
 
 

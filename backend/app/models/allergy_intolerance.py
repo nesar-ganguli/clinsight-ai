@@ -23,7 +23,7 @@ class AllergyIntolerance(Base):
     allergy_code = Column(String(100), nullable=True, index=True)
     allergy_name = Column(String(255), nullable=True)
     criticality = Column(String(100), nullable=True)
-    recorded_date = Column(String(64), nullable=True)
+    recorded_date = Column(DateTime(timezone=True), nullable=True)
     source_type = Column(String(100), nullable=True, index=True)
     source_system = Column(String(255), nullable=True)
     source_record_id = Column(String(255), nullable=True, index=True)

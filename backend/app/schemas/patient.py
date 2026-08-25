@@ -1,7 +1,15 @@
 from datetime import datetime
-from typing import List, Optional, Union
+from typing import Annotated, List, Optional, Union
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, PlainSerializer
+
+from app.core.temporal import format_fhir_datetime
+
+
+IsoDateTime = Annotated[
+    datetime,
+    PlainSerializer(format_fhir_datetime, return_type=str),
+]
 
 
 class SourceMetadataOut(BaseModel):
@@ -20,7 +28,7 @@ class ConditionOut(SourceMetadataOut):
     condition_code: Optional[str]
     condition_name: Optional[str]
     clinical_status: Optional[str]
-    onset_date: Optional[str]
+    onset_date: Optional[IsoDateTime]
 
 
 class ObservationOut(SourceMetadataOut):
@@ -30,7 +38,7 @@ class ObservationOut(SourceMetadataOut):
     observation_name: Optional[str]
     value: Optional[str]
     unit: Optional[str]
-    effective_date: Optional[str]
+    effective_date: Optional[IsoDateTime]
 
 
 class EncounterOut(SourceMetadataOut):
@@ -39,8 +47,8 @@ class EncounterOut(SourceMetadataOut):
     status: Optional[str]
     encounter_class: Optional[str]
     encounter_type: Optional[str]
-    period_start: Optional[str]
-    period_end: Optional[str]
+    period_start: Optional[IsoDateTime]
+    period_end: Optional[IsoDateTime]
 
 
 class MedicationRequestOut(SourceMetadataOut):
@@ -50,7 +58,7 @@ class MedicationRequestOut(SourceMetadataOut):
     intent: Optional[str]
     medication_code: Optional[str]
     medication_name: Optional[str]
-    authored_on: Optional[str]
+    authored_on: Optional[IsoDateTime]
 
 
 class AllergyIntoleranceOut(SourceMetadataOut):
@@ -61,7 +69,7 @@ class AllergyIntoleranceOut(SourceMetadataOut):
     allergy_code: Optional[str]
     allergy_name: Optional[str]
     criticality: Optional[str]
-    recorded_date: Optional[str]
+    recorded_date: Optional[IsoDateTime]
 
 
 class PatientOut(SourceMetadataOut):

@@ -14,7 +14,7 @@ select
         when diagnosis_type in ('resolved', 'inactive') then 'resolved'
         else 'active'
     end as clinical_status,
-    diagnosis_datetime::date as onset_date,
+    timezone('UTC', diagnosis_datetime) as onset_date,
     'hospital_database'::text as source_type,
     source_system,
     diagnosis_source_id as source_record_id,

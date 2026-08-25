@@ -1,4 +1,5 @@
 import { Patient } from "@/lib/types";
+import { compareClinicalDatesDescending } from "@/lib/date-time";
 
 function pluralize(count: number, noun: string) {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
@@ -19,7 +20,7 @@ export function buildPatientNarrative(patient: Patient) {
 
   const latestObservation = patient.observations
     .slice()
-    .sort((left, right) => (right.effective_date || "").localeCompare(left.effective_date || ""))[0];
+    .sort((left, right) => compareClinicalDatesDescending(left.effective_date, right.effective_date))[0];
 
   const lead = `${patient.full_name ?? "This patient"} is represented by a longitudinal chart with ${pluralize(patient.encounters.length, "encounter")}, ${pluralize(patient.conditions.length, "active condition")}, and ${pluralize(patient.observations.length, "observation")}.`;
 

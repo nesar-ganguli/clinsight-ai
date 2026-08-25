@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from app.services.ai_insights import build_patient_ai_insights
+from app.services.ai_insights import _sort_by_date, build_patient_ai_insights
 
 
 def test_ai_insights_are_grounded_and_evaluated():
@@ -41,3 +41,19 @@ def test_ai_insights_are_grounded_and_evaluated():
     )
     assert any(gap["code"] == "diabetes_a1c_gap" for gap in report["care_gaps"])
     assert any(gap["code"] == "allergy_status_unknown" for gap in report["care_gaps"])
+
+
+def test_clinical_date_sorting_uses_chronological_instants():
+    records = [
+        SimpleNamespace(label="date-only", occurred_at="2026-04-01"),
+        SimpleNamespace(label="earlier", occurred_at="2026-04-01T13:45:00Z"),
+        SimpleNamespace(label="latest", occurred_at="2026-04-01T10:30:00-04:00"),
+        SimpleNamespace(label="missing", occurred_at=None),
+    ]
+
+    assert [record.label for record in _sort_by_date(records, "occurred_at")] == [
+        "latest",
+        "earlier",
+        "date-only",
+        "missing",
+    ]

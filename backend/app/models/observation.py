@@ -21,7 +21,7 @@ class Observation(Base):
     observation_name = Column(String(255), nullable=True)
     value = Column(String(255), nullable=True)
     unit = Column(String(64), nullable=True)
-    effective_date = Column(String(64), nullable=True)
+    effective_date = Column(DateTime(timezone=True), nullable=True)
     source_type = Column(String(100), nullable=True, index=True)
     source_system = Column(String(255), nullable=True)
     source_record_id = Column(String(255), nullable=True, index=True)

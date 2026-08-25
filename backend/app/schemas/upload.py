@@ -1,5 +1,7 @@
-from pydantic import BaseModel
+from datetime import datetime
 from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel
 
 
 class PatientSchema(BaseModel):
@@ -15,7 +17,7 @@ class ConditionSchema(BaseModel):
     condition_code: Optional[str]
     condition_name: Optional[str]
     clinical_status: Optional[str]
-    onset_date: Optional[str]
+    onset_date: Optional[datetime]
 
 
 class ObservationSchema(BaseModel):
@@ -25,7 +27,7 @@ class ObservationSchema(BaseModel):
     observation_name: Optional[str]
     value: Optional[str]
     unit: Optional[str]
-    effective_date: Optional[str]
+    effective_date: Optional[datetime]
 
 
 class EncounterSchema(BaseModel):
@@ -34,8 +36,8 @@ class EncounterSchema(BaseModel):
     status: Optional[str]
     encounter_class: Optional[str]
     encounter_type: Optional[str]
-    period_start: Optional[str]
-    period_end: Optional[str]
+    period_start: Optional[datetime]
+    period_end: Optional[datetime]
 
 
 class MedicationRequestSchema(BaseModel):
@@ -45,7 +47,7 @@ class MedicationRequestSchema(BaseModel):
     intent: Optional[str]
     medication_code: Optional[str]
     medication_name: Optional[str]
-    authored_on: Optional[str]
+    authored_on: Optional[datetime]
 
 
 class AllergyIntoleranceSchema(BaseModel):
@@ -56,7 +58,7 @@ class AllergyIntoleranceSchema(BaseModel):
     allergy_code: Optional[str]
     allergy_name: Optional[str]
     criticality: Optional[str]
-    recorded_date: Optional[str]
+    recorded_date: Optional[datetime]
 
 
 class ParsedFHIRBundleResponse(BaseModel):

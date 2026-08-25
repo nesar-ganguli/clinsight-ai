@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import httpx
 
 from app.core.config import settings
+from app.core.temporal import format_fhir_datetime
 from app.services.ai_insights import (
     A1C_CODES,
     BP_CODES,
@@ -437,26 +438,29 @@ def _patient_detail(patient) -> str:
 
 
 def _condition_detail(condition) -> str:
+    onset_date = format_fhir_datetime(condition.onset_date)
     return (
         f"{condition.condition_name or 'Unnamed condition'} is documented with status "
         f"{condition.clinical_status or 'unspecified'}"
-        f"{f' and onset {condition.onset_date}' if condition.onset_date else ''}."
+        f"{f' and onset {onset_date}' if onset_date else ''}."
     )
 
 
 def _observation_detail(observation) -> str:
     value = _format_value(observation.value, observation.unit) or "no value"
+    effective_date = format_fhir_datetime(observation.effective_date)
     return (
         f"{observation.observation_name or 'Unnamed observation'} was recorded as {value}"
-        f"{f' on {observation.effective_date}' if observation.effective_date else ''}."
+        f"{f' on {effective_date}' if effective_date else ''}."
     )
 
 
 def _medication_detail(medication) -> str:
+    authored_on = format_fhir_datetime(medication.authored_on)
     return (
         f"{medication.medication_name or 'Unnamed medication request'} has status "
         f"{medication.status or 'unspecified'}"
-        f"{f' and was authored on {medication.authored_on}' if medication.authored_on else ''}."
+        f"{f' and was authored on {authored_on}' if authored_on else ''}."
     )
 
 
@@ -468,10 +472,12 @@ def _allergy_detail(allergy) -> str:
 
 
 def _encounter_detail(encounter) -> str:
+    period_start = format_fhir_datetime(encounter.period_start)
+    period_end = format_fhir_datetime(encounter.period_end)
     return (
         f"{encounter.encounter_type or 'Encounter'} has status {encounter.status or 'unspecified'}"
-        f"{f' from {encounter.period_start}' if encounter.period_start else ''}"
-        f"{f' to {encounter.period_end}' if encounter.period_end else ''}."
+        f"{f' from {period_start}' if period_start else ''}"
+        f"{f' to {period_end}' if period_end else ''}."
     )
 
 

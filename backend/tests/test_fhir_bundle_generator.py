@@ -37,6 +37,14 @@ def test_build_fhir_bundle_preserves_resource_references():
     assert resources[3]["subject"]["reference"] == patient_reference
     assert resources[4]["subject"]["reference"] == patient_reference
     assert resources[5]["patient"]["reference"] == patient_reference
+    assert resources[1]["period"] == {
+        "start": "2026-04-01T08:00:00Z",
+        "end": "2026-04-01T16:00:00Z",
+    }
+    assert resources[2]["onsetDateTime"] == "2026-01-01T00:00:00Z"
+    assert resources[3]["effectiveDateTime"] == "2026-04-01T14:00:00Z"
+    assert resources[4]["authoredOn"] == "2026-04-01T11:00:00Z"
+    assert resources[5]["recordedDate"] == "2026-04-01T10:00:00Z"
 
 
 def test_generated_bundle_is_supported_by_existing_fhir_parser():

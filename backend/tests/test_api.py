@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import text
@@ -401,6 +402,56 @@ def test_upload_bundle_records_multisource_ingestion_metadata(client):
             "medication_requests",
             "allergy_intolerances",
         }
+    finally:
+        db.close()
+
+
+def test_upload_serializes_typed_clinical_dates_as_iso_values(client):
+    bundle = load_sample_bundle()
+    find_resource(bundle, "Condition", "condition-001")["onsetDateTime"] = "2026-04-01"
+    find_resource(bundle, "Observation", "observation-001")["effectiveDateTime"] = (
+        "2026-04-01T14:30:00Z"
+    )
+    encounter = find_resource(bundle, "Encounter", "encounter-001")
+    encounter["period"]["start"] = "2026-04-01T10:30:00-04:00"
+    encounter["period"]["end"] = None
+    find_resource(bundle, "MedicationRequest", "medicationrequest-001")["authoredOn"] = None
+    find_resource(bundle, "AllergyIntolerance", "allergy-001")["recordedDate"] = "invalid-date"
+
+    upload_response = client.post(
+        "/api/upload",
+        files={"file": ("typed-dates.json", json.dumps(bundle), "application/json")},
+        headers=auth_headers(client),
+    )
+    assert upload_response.status_code == 200
+
+    patient_response = client.get(
+        f"/api/patients/{upload_response.json()['patient_id']}",
+        headers=auth_headers(client, "clinician"),
+    )
+    assert patient_response.status_code == 200
+    patient = patient_response.json()
+
+    condition = next(item for item in patient["conditions"] if item["fhir_condition_id"] == "condition-001")
+    observation = next(
+        item for item in patient["observations"] if item["fhir_observation_id"] == "observation-001"
+    )
+    stored_encounter = patient["encounters"][0]
+
+    assert condition["onset_date"] == "2026-04-01T00:00:00Z"
+    assert observation["effective_date"] == "2026-04-01T14:30:00Z"
+    assert stored_encounter["period_start"] == "2026-04-01T14:30:00Z"
+    assert stored_encounter["period_end"] is None
+    assert patient["medication_requests"][0]["authored_on"] is None
+    assert patient["allergies"][0]["recorded_date"] is None
+
+    db = SessionLocal()
+    try:
+        assert isinstance(db.query(Condition).filter(Condition.id == condition["id"]).one().onset_date, datetime)
+        assert isinstance(
+            db.query(Observation).filter(Observation.id == observation["id"]).one().effective_date,
+            datetime,
+        )
     finally:
         db.close()
 

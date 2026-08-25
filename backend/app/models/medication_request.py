@@ -22,7 +22,7 @@ class MedicationRequest(Base):
     intent = Column(String(100), nullable=True)
     medication_code = Column(String(100), nullable=True, index=True)
     medication_name = Column(String(255), nullable=True)
-    authored_on = Column(String(64), nullable=True)
+    authored_on = Column(DateTime(timezone=True), nullable=True)
     source_type = Column(String(100), nullable=True, index=True)
     source_system = Column(String(255), nullable=True)
     source_record_id = Column(String(255), nullable=True, index=True)
