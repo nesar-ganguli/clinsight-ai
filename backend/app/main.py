@@ -8,6 +8,7 @@ from app.api.routes_external_fhir import router as external_fhir_router
 from app.api.routes_upload import router as upload_router
 from app.api.routes_patient import router as patient_router
 from app.api.routes_patient_chat import router as patient_chat_router
+from app.api.routes_pipeline_runs import router as pipeline_runs_router
 from app.api.routes_quality import router as quality_router
 from app.core.config import settings
 
@@ -21,6 +22,7 @@ from app.models.audit_log import AuditLog
 from app.models.curated_record_source import CuratedRecordSource
 from app.models.ingestion_batch import IngestionBatch
 from app.models.patient_source_identifier import PatientSourceIdentifier
+from app.models.pipeline_run import PipelineRun
 from app.models.quarantine_record import QuarantineRecord
 from app.models.raw_hospital import (
     RawHospitalAllergy,
@@ -64,6 +66,7 @@ app.include_router(external_fhir_router, prefix=settings.api_v1_prefix, tags=["E
 app.include_router(upload_router, prefix=settings.api_v1_prefix, tags=["Upload"])
 app.include_router(patient_router, prefix=settings.api_v1_prefix, tags=["Patients"])
 app.include_router(patient_chat_router, prefix=settings.api_v1_prefix, tags=["Patient Chat"])
+app.include_router(pipeline_runs_router, prefix=settings.api_v1_prefix, tags=["Pipeline Runs"])
 app.include_router(quality_router, prefix=settings.api_v1_prefix, tags=["Quality"])
 app.include_router(ai_insights_router, prefix=settings.api_v1_prefix, tags=["AI Insights"])
 app.include_router(demo_router, prefix=settings.api_v1_prefix, tags=["Demo"])

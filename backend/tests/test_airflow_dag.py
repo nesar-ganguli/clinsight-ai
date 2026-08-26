@@ -20,12 +20,14 @@ def test_airflow_pipeline_has_required_retryable_task_chain():
 
     assert definition.DAG_ID == "clinsight_hospital_pipeline"
     assert tuple(definition.TASK_DEFINITIONS) == (
+        "start_pipeline_run",
         "generate_hospital_data",
         "dbt_run",
         "dbt_test",
         "record_pipeline_metrics",
     )
     assert definition.TASK_DEPENDENCIES == (
+        ("start_pipeline_run", "generate_hospital_data"),
         ("generate_hospital_data", "dbt_run"),
         ("dbt_run", "dbt_test"),
         ("dbt_test", "record_pipeline_metrics"),
@@ -42,10 +44,13 @@ def test_airflow_tasks_reuse_existing_commands_and_propagate_failures():
     }
 
     assert all(command.startswith("set -euo pipefail") for command in commands.values())
+    assert "scripts/manage_pipeline_run.py start" in commands["start_pipeline_run"]
     assert "scripts/generate_hospital_data.py" in commands["generate_hospital_data"]
     assert "--ingestion-batch-id \"$PIPELINE_BATCH_ID\"" in commands["generate_hospital_data"]
     assert "dbt run" in commands["dbt_run"]
     assert "dbt test" in commands["dbt_test"]
+    assert "scripts/observe_pipeline_command.py" in commands["dbt_run"]
+    assert "scripts/observe_pipeline_command.py" in commands["dbt_test"]
     assert "scripts/report_pipeline_metrics.py" in commands["record_pipeline_metrics"]
     assert "run_id" in definition.TASK_DEFINITIONS["generate_hospital_data"]["env"][
         "PIPELINE_BATCH_ID"
@@ -53,11 +58,15 @@ def test_airflow_tasks_reuse_existing_commands_and_propagate_failures():
     assert definition.TASK_DEFINITIONS["record_pipeline_metrics"]["env"][
         "PIPELINE_BATCH_ID"
     ] == definition.TASK_DEFINITIONS["generate_hospital_data"]["env"]["PIPELINE_BATCH_ID"]
+    assert definition.TASK_DEFINITIONS["record_pipeline_metrics"]["env"][
+        "PIPELINE_RUN_ID"
+    ] == "{{ run_id }}"
 
 
 def test_airflow_dag_and_optional_compose_profile_are_declared():
     dag_path = AIRFLOW_DAGS_DIR / "clinsight_hospital_pipeline.py"
-    compile(dag_path.read_text(encoding="utf-8"), str(dag_path), "exec")
+    dag_text = dag_path.read_text(encoding="utf-8")
+    compile(dag_text, str(dag_path), "exec")
 
     compose_text = (REPOSITORY_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     dockerfile_text = (REPOSITORY_ROOT / "airflow" / "Dockerfile").read_text(encoding="utf-8")
@@ -66,3 +75,5 @@ def test_airflow_dag_and_optional_compose_profile_are_declared():
     assert "      - airflow" in compose_text
     assert "command: standalone" in compose_text
     assert "apache/airflow:3.3.1-python3.11" in dockerfile_text
+    assert "on_failure_callback" in dag_text
+    assert "manage_pipeline_run.py" in dag_text

@@ -16,6 +16,7 @@ from app.models.medication_request import MedicationRequest
 from app.models.observation import Observation
 from app.models.patient import Patient
 from app.models.patient_source_identifier import PatientSourceIdentifier
+from app.models.pipeline_run import PipelineRun
 from app.models.quarantine_record import QuarantineRecord
 from app.models.source_system import SourceSystem
 from app.services import ingestion as ingestion_service
@@ -126,6 +127,7 @@ def test_transport_level_upload_errors_are_batch_fatal(client, content, expected
     db = SessionLocal()
     try:
         assert db.query(IngestionBatch).count() == 0
+        assert db.query(PipelineRun).count() == 0
         assert db.query(QuarantineRecord).count() == 0
     finally:
         db.close()
@@ -180,10 +182,16 @@ def test_uploading_same_bundle_twice_upserts_without_duplicates(client):
         assert db.query(Patient).count() == 1
         assert db.query(PatientSourceIdentifier).count() == 1
         latest_batch = db.query(IngestionBatch).order_by(IngestionBatch.id.desc()).first()
+        latest_pipeline_run = db.query(PipelineRun).order_by(PipelineRun.id.desc()).first()
         assert {
             source.ingestion_batch_id
             for source in db.query(CuratedRecordSource).all()
         } == {latest_batch.id}
+        assert db.query(PipelineRun).count() == 2
+        assert latest_pipeline_run.status == "success"
+        assert latest_pipeline_run.duplicate_or_updated_count == sum(
+            second_payload["resource_counts"].values()
+        )
     finally:
         db.close()
 
@@ -407,6 +415,7 @@ def test_upload_bundle_records_multisource_ingestion_metadata(client):
     try:
         source_system = db.query(SourceSystem).filter(SourceSystem.name == "ClinSight FHIR Upload").one()
         ingestion_batch = db.query(IngestionBatch).one()
+        pipeline_run = db.query(PipelineRun).one()
         patient_identifier = db.query(PatientSourceIdentifier).one()
         curated_sources = db.query(CuratedRecordSource).all()
 
@@ -421,6 +430,16 @@ def test_upload_bundle_records_multisource_ingestion_metadata(client):
         assert ingestion_batch.error_message is None
         assert ingestion_batch.started_at is not None
         assert ingestion_batch.completed_at is not None
+        assert pipeline_run.pipeline_name == "fhir_ingestion"
+        assert pipeline_run.run_id == f"fhir-ingestion-{ingestion_batch.id}"
+        assert pipeline_run.source_system == source_system.name
+        assert pipeline_run.batch_id == str(ingestion_batch.id)
+        assert pipeline_run.status == "success"
+        assert pipeline_run.received_count == ingestion_batch.record_count
+        assert pipeline_run.accepted_count == ingestion_batch.accepted_count
+        assert pipeline_run.rejected_count == 0
+        assert pipeline_run.duplicate_or_updated_count == 0
+        assert pipeline_run.duration_ms is not None
         assert patient_identifier.patient_id == payload["patient_id"]
         assert patient_identifier.identifier_type == "fhir_patient_id"
         assert patient_identifier.identifier_value == "patient-001"
@@ -469,6 +488,7 @@ def test_failed_ingestion_batch_persists_when_bundle_has_no_patient(client):
     db = SessionLocal()
     try:
         ingestion_batch = db.query(IngestionBatch).one()
+        pipeline_run = db.query(PipelineRun).one()
         assert ingestion_batch.status == "failed"
         assert ingestion_batch.record_count == 1
         assert ingestion_batch.accepted_count == 0
@@ -476,6 +496,12 @@ def test_failed_ingestion_batch_persists_when_bundle_has_no_patient(client):
         assert ingestion_batch.error_message == "No usable Patient resource found in bundle"
         assert ingestion_batch.started_at is not None
         assert ingestion_batch.completed_at is not None
+        assert pipeline_run.status == "failed"
+        assert pipeline_run.batch_id == str(ingestion_batch.id)
+        assert pipeline_run.received_count == 1
+        assert pipeline_run.rejected_count == 1
+        assert pipeline_run.error_message == ingestion_batch.error_message
+        assert pipeline_run.duration_ms is not None
         assert db.query(Patient).count() == 0
         assert db.query(CuratedRecordSource).count() == 0
         assert db.query(QuarantineRecord).count() == 0
@@ -512,6 +538,7 @@ def test_clinical_records_roll_back_while_failed_batch_and_sanitized_error_persi
     db = SessionLocal()
     try:
         ingestion_batch = db.query(IngestionBatch).one()
+        pipeline_run = db.query(PipelineRun).one()
         assert ingestion_batch.status == "failed"
         assert ingestion_batch.accepted_count == 0
         assert ingestion_batch.rejected_count == ingestion_batch.record_count
@@ -519,6 +546,10 @@ def test_clinical_records_roll_back_while_failed_batch_and_sanitized_error_persi
         assert "Jane Doe" not in ingestion_batch.error_message
         assert "123-45-6789" not in ingestion_batch.error_message
         assert ingestion_batch.completed_at is not None
+        assert pipeline_run.status == "failed"
+        assert pipeline_run.error_message == "ValueError: FHIR bundle ingestion failed"
+        assert "Jane Doe" not in pipeline_run.error_message
+        assert "123-45-6789" not in pipeline_run.error_message
 
         assert db.query(SourceSystem).count() == 1
         assert db.query(Patient).count() == 0
@@ -1144,6 +1175,78 @@ def test_admin_can_view_audit_logs_and_dbt_events(client):
 def test_clinician_cannot_view_audit_logs(client):
     response = client.get("/api/audit-logs", headers=auth_headers(client, "clinician"))
     assert response.status_code == 403
+
+
+def test_pipeline_run_api_reports_recent_runs_and_aggregate_metrics(client):
+    successful_bundle = load_sample_bundle()
+    failed_bundle = {
+        "resourceType": "Bundle",
+        "type": "collection",
+        "entry": [{"resource": {"resourceType": "Condition", "id": "missing-patient"}}],
+    }
+    admin_headers = auth_headers(client)
+
+    successful_response = client.post(
+        "/api/upload",
+        files={
+            "file": (
+                "patient_bundle_1.json",
+                json.dumps(successful_bundle),
+                "application/json",
+            )
+        },
+        headers=admin_headers,
+    )
+    failed_response = client.post(
+        "/api/upload",
+        files={
+            "file": (
+                "missing-patient.json",
+                json.dumps(failed_bundle),
+                "application/json",
+            )
+        },
+        headers=admin_headers,
+    )
+
+    assert successful_response.status_code == 200
+    assert failed_response.status_code == 400
+
+    list_response = client.get(
+        "/api/pipeline-runs",
+        params={"pipeline_name": "fhir_ingestion", "limit": 1},
+        headers=admin_headers,
+    )
+    metrics_response = client.get(
+        "/api/pipeline-runs/metrics",
+        params={"pipeline_name": "fhir_ingestion"},
+        headers=admin_headers,
+    )
+    denied_response = client.get(
+        "/api/pipeline-runs",
+        headers=auth_headers(client, "clinician"),
+    )
+
+    assert list_response.status_code == 200
+    list_payload = list_response.json()
+    assert list_payload["total"] == 2
+    assert list_payload["limit"] == 1
+    assert len(list_payload["items"]) == 1
+    assert list_payload["items"][0]["status"] == "failed"
+    assert list_payload["items"][0]["error_message"] == "No usable Patient resource found in bundle"
+
+    assert metrics_response.status_code == 200
+    metrics = metrics_response.json()
+    assert metrics["total_runs"] == 2
+    assert metrics["successful_runs"] == 1
+    assert metrics["failed_runs"] == 1
+    assert metrics["success_rate"] == 0.5
+    assert metrics["records_received"] == 9
+    assert metrics["records_accepted"] == 8
+    assert metrics["records_rejected"] == 1
+    assert metrics["average_duration_ms"] is not None
+    assert metrics["latest_successful_run"]["status"] == "success"
+    assert denied_response.status_code == 403
 
 
 def test_smart_health_it_patient_search_requires_data_reviewer_role(client, monkeypatch):

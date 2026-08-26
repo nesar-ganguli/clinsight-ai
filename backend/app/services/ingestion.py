@@ -17,6 +17,11 @@ from app.models.patient_source_identifier import PatientSourceIdentifier
 from app.models.quarantine_record import QuarantineRecord
 from app.models.source_system import SourceSystem
 from app.services.fhir_parser import parse_fhir_bundle
+from app.services.pipeline_runs import (
+    complete_pipeline_run,
+    fail_pipeline_run,
+    start_pipeline_run,
+)
 
 
 FHIR_UPLOAD_SOURCE_NAME = "ClinSight FHIR Upload"
@@ -25,6 +30,7 @@ SMART_HEALTH_IT_SOURCE_NAME = "SMART Health IT R4 Sandbox"
 FHIR_UPLOAD_TRANSFORM_VERSION = "fhir-upload-v1"
 GENERATED_FHIR_SOURCE_MARKER = "clinsight-generated-fhir-bundle"
 SMART_HEALTH_IT_SOURCE_MARKER = "smart-health-it-r4-sandbox"
+FHIR_INGESTION_PIPELINE_NAME = "fhir_ingestion"
 SAFE_INGESTION_ERROR_MESSAGES = {
     "No Patient resource found in bundle",
     "No usable Patient resource found in bundle",
@@ -56,6 +62,16 @@ def ingest_fhir_bundle(
     db.flush()
     ingestion_batch_id = ingestion_batch.id
     source_system_id = source_system.id
+    pipeline_run_id = f"fhir-ingestion-{ingestion_batch_id}"
+    start_pipeline_run(
+        db,
+        pipeline_name=FHIR_INGESTION_PIPELINE_NAME,
+        run_id=pipeline_run_id,
+        source_system=source_system.name,
+        batch_id=str(ingestion_batch_id),
+        received_count=ingestion_batch.record_count,
+        commit=False,
+    )
     db.commit()
 
     try:
@@ -107,6 +123,7 @@ def _ingest_fhir_bundle_clinical(
         source_system.id,
         fhir_patient_id,
     )
+    duplicate_or_updated_count = 1 if patient else 0
 
     if patient:
         import_mode = "updated"
@@ -155,103 +172,113 @@ def _ingest_fhir_bundle_clinical(
     )
 
     for cond in parsed_data.get("conditions", []):
-        _upsert_clinical_record(
-            db,
-            model=Condition,
-            patient=patient,
-            source_system=source_system,
-            ingestion_batch=ingestion_batch,
-            transformed_at=transformed_at,
-            curated_table_name="conditions",
-            fhir_id_attribute="fhir_condition_id",
-            fhir_resource_id=cond.get("fhir_condition_id"),
-            values={
-                "condition_code": cond.get("condition_code"),
-                "condition_name": cond.get("condition_name"),
-                "clinical_status": cond.get("clinical_status"),
-                "onset_date": cond.get("onset_date"),
-            },
+        duplicate_or_updated_count += int(
+            _upsert_clinical_record(
+                db,
+                model=Condition,
+                patient=patient,
+                source_system=source_system,
+                ingestion_batch=ingestion_batch,
+                transformed_at=transformed_at,
+                curated_table_name="conditions",
+                fhir_id_attribute="fhir_condition_id",
+                fhir_resource_id=cond.get("fhir_condition_id"),
+                values={
+                    "condition_code": cond.get("condition_code"),
+                    "condition_name": cond.get("condition_name"),
+                    "clinical_status": cond.get("clinical_status"),
+                    "onset_date": cond.get("onset_date"),
+                },
+            )
         )
 
     for obs in parsed_data.get("observations", []):
-        _upsert_clinical_record(
-            db,
-            model=Observation,
-            patient=patient,
-            source_system=source_system,
-            ingestion_batch=ingestion_batch,
-            transformed_at=transformed_at,
-            curated_table_name="observations",
-            fhir_id_attribute="fhir_observation_id",
-            fhir_resource_id=obs.get("fhir_observation_id"),
-            values={
-                "observation_code": obs.get("observation_code"),
-                "observation_name": obs.get("observation_name"),
-                "value": obs.get("value"),
-                "unit": obs.get("unit"),
-                "effective_date": obs.get("effective_date"),
-            },
+        duplicate_or_updated_count += int(
+            _upsert_clinical_record(
+                db,
+                model=Observation,
+                patient=patient,
+                source_system=source_system,
+                ingestion_batch=ingestion_batch,
+                transformed_at=transformed_at,
+                curated_table_name="observations",
+                fhir_id_attribute="fhir_observation_id",
+                fhir_resource_id=obs.get("fhir_observation_id"),
+                values={
+                    "observation_code": obs.get("observation_code"),
+                    "observation_name": obs.get("observation_name"),
+                    "value": obs.get("value"),
+                    "unit": obs.get("unit"),
+                    "effective_date": obs.get("effective_date"),
+                },
+            )
         )
 
     for encounter in parsed_data.get("encounters", []):
-        _upsert_clinical_record(
-            db,
-            model=Encounter,
-            patient=patient,
-            source_system=source_system,
-            ingestion_batch=ingestion_batch,
-            transformed_at=transformed_at,
-            curated_table_name="encounters",
-            fhir_id_attribute="fhir_encounter_id",
-            fhir_resource_id=encounter.get("fhir_encounter_id"),
-            values={
-                "status": encounter.get("status"),
-                "encounter_class": encounter.get("encounter_class"),
-                "encounter_type": encounter.get("encounter_type"),
-                "period_start": encounter.get("period_start"),
-                "period_end": encounter.get("period_end"),
-            },
+        duplicate_or_updated_count += int(
+            _upsert_clinical_record(
+                db,
+                model=Encounter,
+                patient=patient,
+                source_system=source_system,
+                ingestion_batch=ingestion_batch,
+                transformed_at=transformed_at,
+                curated_table_name="encounters",
+                fhir_id_attribute="fhir_encounter_id",
+                fhir_resource_id=encounter.get("fhir_encounter_id"),
+                values={
+                    "status": encounter.get("status"),
+                    "encounter_class": encounter.get("encounter_class"),
+                    "encounter_type": encounter.get("encounter_type"),
+                    "period_start": encounter.get("period_start"),
+                    "period_end": encounter.get("period_end"),
+                },
+            )
         )
 
     for medication in parsed_data.get("medication_requests", []):
-        _upsert_clinical_record(
-            db,
-            model=MedicationRequest,
-            patient=patient,
-            source_system=source_system,
-            ingestion_batch=ingestion_batch,
-            transformed_at=transformed_at,
-            curated_table_name="medication_requests",
-            fhir_id_attribute="fhir_medication_request_id",
-            fhir_resource_id=medication.get("fhir_medication_request_id"),
-            values={
-                "status": medication.get("status"),
-                "intent": medication.get("intent"),
-                "medication_code": medication.get("medication_code"),
-                "medication_name": medication.get("medication_name"),
-                "authored_on": medication.get("authored_on"),
-            },
+        duplicate_or_updated_count += int(
+            _upsert_clinical_record(
+                db,
+                model=MedicationRequest,
+                patient=patient,
+                source_system=source_system,
+                ingestion_batch=ingestion_batch,
+                transformed_at=transformed_at,
+                curated_table_name="medication_requests",
+                fhir_id_attribute="fhir_medication_request_id",
+                fhir_resource_id=medication.get("fhir_medication_request_id"),
+                values={
+                    "status": medication.get("status"),
+                    "intent": medication.get("intent"),
+                    "medication_code": medication.get("medication_code"),
+                    "medication_name": medication.get("medication_name"),
+                    "authored_on": medication.get("authored_on"),
+                },
+            )
         )
 
     for allergy in parsed_data.get("allergies", []):
-        _upsert_clinical_record(
-            db,
-            model=AllergyIntolerance,
-            patient=patient,
-            source_system=source_system,
-            ingestion_batch=ingestion_batch,
-            transformed_at=transformed_at,
-            curated_table_name="allergy_intolerances",
-            fhir_id_attribute="fhir_allergy_id",
-            fhir_resource_id=allergy.get("fhir_allergy_id"),
-            values={
-                "clinical_status": allergy.get("clinical_status"),
-                "verification_status": allergy.get("verification_status"),
-                "allergy_code": allergy.get("allergy_code"),
-                "allergy_name": allergy.get("allergy_name"),
-                "criticality": allergy.get("criticality"),
-                "recorded_date": allergy.get("recorded_date"),
-            },
+        duplicate_or_updated_count += int(
+            _upsert_clinical_record(
+                db,
+                model=AllergyIntolerance,
+                patient=patient,
+                source_system=source_system,
+                ingestion_batch=ingestion_batch,
+                transformed_at=transformed_at,
+                curated_table_name="allergy_intolerances",
+                fhir_id_attribute="fhir_allergy_id",
+                fhir_resource_id=allergy.get("fhir_allergy_id"),
+                values={
+                    "clinical_status": allergy.get("clinical_status"),
+                    "verification_status": allergy.get("verification_status"),
+                    "allergy_code": allergy.get("allergy_code"),
+                    "allergy_name": allergy.get("allergy_name"),
+                    "criticality": allergy.get("criticality"),
+                    "recorded_date": allergy.get("recorded_date"),
+                },
+            )
         )
 
     resource_counts = parsed_data.get("resource_counts", {})
@@ -265,6 +292,16 @@ def _ingest_fhir_bundle_clinical(
     ingestion_batch.rejected_count = rejected_count
     ingestion_batch.error_message = None
     ingestion_batch.completed_at = datetime.now(timezone.utc)
+    complete_pipeline_run(
+        db,
+        pipeline_name=FHIR_INGESTION_PIPELINE_NAME,
+        run_id=f"fhir-ingestion-{ingestion_batch.id}",
+        received_count=record_count,
+        accepted_count=accepted_count,
+        rejected_count=rejected_count,
+        duplicate_or_updated_count=duplicate_or_updated_count,
+        commit=False,
+    )
 
     result = {
         "patient_id": patient.id,
@@ -311,6 +348,17 @@ def _mark_ingestion_batch_failed(db: Session, ingestion_batch_id: int, exc: Exce
     ingestion_batch.rejected_count = ingestion_batch.record_count
     ingestion_batch.error_message = _sanitize_ingestion_error(exc)
     ingestion_batch.completed_at = datetime.now(timezone.utc)
+    fail_pipeline_run(
+        db,
+        pipeline_name=FHIR_INGESTION_PIPELINE_NAME,
+        run_id=f"fhir-ingestion-{ingestion_batch.id}",
+        source_system=ingestion_batch.source_system.name,
+        batch_id=str(ingestion_batch.id),
+        received_count=ingestion_batch.record_count,
+        rejected_count=ingestion_batch.record_count,
+        error_message=ingestion_batch.error_message,
+        commit=False,
+    )
     db.commit()
 
 
@@ -480,7 +528,7 @@ def _upsert_clinical_record(
     fhir_id_attribute: str,
     fhir_resource_id: Optional[str],
     values: Dict[str, Any],
-) -> Any:
+) -> bool:
     record = None
     if fhir_resource_id:
         record = (
@@ -493,6 +541,7 @@ def _upsert_clinical_record(
             .first()
         )
 
+    was_updated = record is not None
     if record is None:
         record = model(
             patient_id=patient.id,
@@ -519,7 +568,7 @@ def _upsert_clinical_record(
         ingestion_batch.id,
         raw_record_id=fhir_resource_id,
     )
-    return record
+    return was_updated
 
 
 def _upsert_curated_source(

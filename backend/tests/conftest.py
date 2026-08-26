@@ -21,6 +21,7 @@ from app.models.medication_request import MedicationRequest
 from app.models.observation import Observation
 from app.models.patient import Patient
 from app.models.patient_source_identifier import PatientSourceIdentifier
+from app.models.pipeline_run import PipelineRun
 from app.models.quarantine_record import QuarantineRecord
 from app.models.raw_hospital import (
     RawHospitalAllergy,
@@ -60,6 +61,7 @@ def clear_database():
     try:
         db.query(CuratedRecordSource).delete()
         db.query(AuditLog).delete()
+        db.query(PipelineRun).delete()
         db.query(StagingClinicalResource).delete()
         db.query(StagingPatientIdentity).delete()
         db.query(RawHospitalAllergy).delete()

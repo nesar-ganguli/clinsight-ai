@@ -11,6 +11,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from app.core.config import settings
 from app.core.database import SessionLocal
+from app.services.pipeline_runs import complete_pipeline_run
 
 
 RAW_TABLES = (
@@ -59,6 +60,31 @@ def collect_pipeline_metrics(db: Session, ingestion_batch_id: str) -> Dict[str, 
     }
 
 
+def count_raw_pipeline_records(db: Session, ingestion_batch_id: str) -> int:
+    return sum(
+        _count_batch_rows(db, table_name, ingestion_batch_id)
+        for table_name in RAW_TABLES
+    )
+
+
+def finalize_pipeline_run(
+    db: Session,
+    *,
+    run_id: str,
+    ingestion_batch_id: str,
+) -> Dict[str, Any]:
+    metrics = collect_pipeline_metrics(db, ingestion_batch_id)
+    complete_pipeline_run(
+        db,
+        pipeline_name="clinsight_hospital_pipeline",
+        run_id=run_id,
+        received_count=metrics["raw_total"],
+        accepted_count=metrics["clinical_total"],
+        rejected_count=0,
+    )
+    return metrics
+
+
 def _count_batch_rows(
     db: Session,
     table_name: str,
@@ -98,6 +124,7 @@ def parse_args() -> argparse.Namespace:
         description="Report batch-scoped raw and dbt clinical record counts to stdout."
     )
     parser.add_argument("--ingestion-batch-id", required=True)
+    parser.add_argument("--run-id", required=True)
     return parser.parse_args()
 
 
@@ -105,7 +132,11 @@ def main() -> None:
     args = parse_args()
     db = SessionLocal()
     try:
-        metrics = collect_pipeline_metrics(db, args.ingestion_batch_id)
+        metrics = finalize_pipeline_run(
+            db,
+            run_id=args.run_id,
+            ingestion_batch_id=args.ingestion_batch_id,
+        )
     finally:
         db.close()
     print(json.dumps(metrics, indent=2, sort_keys=True))

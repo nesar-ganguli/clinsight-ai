@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import subprocess
 
 from airflow.providers.standard.operators.bash import BashOperator
 from airflow.sdk import DAG, Param
@@ -12,6 +13,32 @@ from pipeline_definition import (
 )
 
 
+def record_pipeline_failure(context):
+    run_id = context["run_id"]
+    configured_batch_id = context.get("params", {}).get("batch_id")
+    batch_id = configured_batch_id or run_id
+    task_instance = context.get("task_instance")
+    task_id = task_instance.task_id if task_instance else "unknown"
+    subprocess.run(
+        [
+            "python",
+            "/opt/clinsight/backend/scripts/manage_pipeline_run.py",
+            "fail",
+            "--pipeline-name",
+            DAG_ID,
+            "--run-id",
+            run_id,
+            "--source-system",
+            "internal_hospital_ods",
+            "--batch-id",
+            batch_id,
+            "--error-message",
+            f"Airflow task {task_id} failed after retries",
+        ],
+        check=False,
+    )
+
+
 with DAG(
     dag_id=DAG_ID,
     description="Generate synthetic hospital data and build/test ClinSight dbt clinical marts.",
@@ -22,6 +49,7 @@ with DAG(
     default_args={
         "retries": DEFAULT_RETRIES,
         "retry_delay": RETRY_DELAY,
+        "on_failure_callback": record_pipeline_failure,
     },
     params={
         "batch_id": Param(
