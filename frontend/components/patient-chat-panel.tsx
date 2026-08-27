@@ -32,7 +32,8 @@ export function PatientChatPanel({ patientId, showSourceMetadata }: Props) {
   const [question, setQuestion] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [responses, setResponses] = useState<PatientChatResponse[]>([]);
+  const [submittedQuestion, setSubmittedQuestion] = useState("");
+  const [latestResponse, setLatestResponse] = useState<PatientChatResponse | null>(null);
 
   async function submitQuestion(nextQuestion = question) {
     const trimmed = nextQuestion.trim();
@@ -43,11 +44,13 @@ export function PatientChatPanel({ patientId, showSourceMetadata }: Props) {
 
     setPending(true);
     setError(null);
+    setLatestResponse(null);
+    setSubmittedQuestion(trimmed);
     setQuestion(trimmed);
 
     try {
       const response = await askPatientQuestion(patientId, trimmed);
-      setResponses((current) => [response, ...current].slice(0, 5));
+      setLatestResponse(response);
       setQuestion("");
     } catch (chatError) {
       setError(chatError instanceof Error ? chatError.message : "Question failed");
@@ -94,42 +97,62 @@ export function PatientChatPanel({ patientId, showSourceMetadata }: Props) {
           </button>
         </div>
 
-        {error ? <div className="status-banner status-error">{error}</div> : null}
-
-        <div className="chat-response-list">
-          {responses.map((response) => (
-            <article key={`${response.question}-${response.generated_by}`} className="chat-response-card">
-              <div className="chat-question">{response.question}</div>
-              <p>{response.answer}</p>
-              <div className="pill-row">
-                <span className={`badge ${response.confidence === "low" ? "warning" : "info"}`}>
-                  {response.confidence} confidence
-                </span>
-                <span className="badge info">{response.llm_used ? "LLM assisted" : "deterministic"}</span>
-                {response.refused ? <span className="badge warning">advice refused</span> : null}
+        <div className="chat-result-region" aria-live="polite">
+          {pending ? (
+            <article className="chat-response-card chat-response-loading" aria-busy="true">
+              <div className="chat-question">{submittedQuestion}</div>
+              <div className="chat-loading-line">
+                <span className="chat-loading-mark" aria-hidden="true" />
+                Reviewing the available patient records…
               </div>
-              {response.citations.length > 0 ? (
-                <div className="citation-row" aria-label="Retrieved source records">
-                  {response.citations.map((citation) => {
-                    const sourceLabel = showSourceMetadata ? formatSourceLabel(citation) : "";
-                    return (
-                      <span
-                        key={citation.id}
-                        className="citation-chip"
-                        title={[citation.excerpt, sourceLabel].filter(Boolean).join(" | ")}
-                      >
-                        <span>{citation.resource_type} #{citation.record_id}</span>
-                        {sourceLabel ? <span>{sourceLabel}</span> : null}
-                      </span>
-                    );
-                  })}
-                </div>
+            </article>
+          ) : error ? (
+            <article className="chat-response-card">
+              <div className="chat-question">{submittedQuestion}</div>
+              <div className="status-banner status-error">{error}</div>
+            </article>
+          ) : latestResponse ? (
+            <article className="chat-response-card">
+              <div className="chat-question">{latestResponse.question}</div>
+              <p>{latestResponse.answer}</p>
+              <div className="pill-row">
+                <span className={`badge ${latestResponse.confidence === "low" ? "warning" : "info"}`}>
+                  {latestResponse.confidence} confidence
+                </span>
+                <span className="badge info">{latestResponse.llm_used ? "LLM assisted" : "deterministic"}</span>
+                {latestResponse.refused ? <span className="badge warning">advice refused</span> : null}
+              </div>
+              {latestResponse.citations.length > 0 ? (
+                <section className="chat-sources" aria-labelledby={`chat-sources-${patientId}`}>
+                  <div className="chat-sources-heading" id={`chat-sources-${patientId}`}>
+                    Sources reviewed ({latestResponse.citations.length})
+                  </div>
+                  <div className="chat-source-list">
+                    {latestResponse.citations.map((citation) => {
+                      const sourceLabel = showSourceMetadata ? formatSourceLabel(citation) : "";
+                      return (
+                        <div key={citation.id} className="chat-source-card">
+                          <div className="chat-source-header">
+                            <span className="badge info">{citation.resource_type}</span>
+                            <strong>{citation.label}</strong>
+                          </div>
+                          <p>{citation.excerpt}</p>
+                          <div className="chat-source-record">
+                            Record #{citation.record_id}
+                            {citation.date ? ` • ${citation.date}` : ""}
+                          </div>
+                          {sourceLabel ? <div className="chat-source-provenance">{sourceLabel}</div> : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
               ) : null}
-              {response.safety_notes.length > 0 ? (
-                <div className="meta-line">{response.safety_notes.join(" ")}</div>
+              {latestResponse.safety_notes.length > 0 ? (
+                <div className="meta-line">{latestResponse.safety_notes.join(" ")}</div>
               ) : null}
             </article>
-          ))}
+          ) : null}
         </div>
       </div>
     </section>
