@@ -2,45 +2,38 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.permissions import permissions_for_role
 from app.models.user import User
-from app.schemas.auth import LoginRequest, LoginResponse, UserOut
+from app.schemas.auth import DemoAccountListResponse, LoginRequest, LoginResponse, UserOut
 from app.services.audit import write_audit_event
-from app.services.auth import authenticate_user, create_access_token, get_current_user
+from app.services.auth import DEMO_USERS, authenticate_user, create_access_token, ensure_demo_users, get_current_user
 
 
 router = APIRouter()
 
 
-ROLE_PERMISSIONS = {
-    "admin": [
-        "view_patient_directory",
-        "view_patient_charts",
-        "view_grounded_ai_summary",
-        "view_care_gaps",
-        "view_quality_alerts",
-        "view_source_metadata",
-        "upload_fhir_bundle",
-        "import_external_fhir",
-    ],
-    "clinician": [
-        "view_patient_directory",
-        "view_patient_charts",
-        "view_grounded_ai_summary",
-    ],
-    "care_coordinator": [
-        "view_patient_directory",
-        "view_patient_charts",
-        "view_care_gaps",
-    ],
-    "data_reviewer": [
-        "view_patient_directory",
-        "view_patient_charts",
-        "view_quality_alerts",
-        "view_source_metadata",
-        "upload_fhir_bundle",
-        "import_external_fhir",
-    ],
-}
+@router.get("/auth/demo-accounts", response_model=DemoAccountListResponse)
+def get_demo_accounts(db: Session = Depends(get_db)):
+    ensure_demo_users(db)
+    usernames = [username for username, _, _ in DEMO_USERS]
+    users = (
+        db.query(User)
+        .filter(User.username.in_(usernames), User.is_active.is_(True))
+        .all()
+    )
+    users_by_username = {user.username: user for user in users}
+    return {
+        "items": [
+            {
+                "username": user.username,
+                "full_name": user.full_name,
+                "role": user.role,
+                "permissions": permissions_for_role(user.role),
+            }
+            for username in usernames
+            if (user := users_by_username.get(username)) is not None
+        ]
+    }
 
 
 @router.post("/auth/login", response_model=LoginResponse)
@@ -76,5 +69,5 @@ def _user_out(user: User):
         "username": user.username,
         "full_name": user.full_name,
         "role": user.role,
-        "permissions": ROLE_PERMISSIONS.get(user.role, []),
+        "permissions": permissions_for_role(user.role),
     }

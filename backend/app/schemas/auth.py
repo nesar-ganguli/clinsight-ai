@@ -20,3 +20,14 @@ class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserOut
+
+
+class DemoAccountOut(BaseModel):
+    username: str
+    full_name: Optional[str]
+    role: str
+    permissions: List[str]
+
+
+class DemoAccountListResponse(BaseModel):
+    items: List[DemoAccountOut]
