@@ -1007,6 +1007,65 @@ def test_patient_chat_a1c_question_retrieves_only_matching_observation(client):
     assert "Hemoglobin A1c was recorded as 7.1 %" in payload["answer"]
 
 
+def test_patient_chat_unmatched_keywords_do_not_fall_back_to_entire_chart(client):
+    bundle = load_sample_bundle()
+    upload_response = client.post(
+        "/api/upload",
+        files={"file": ("patient_bundle_1.json", json.dumps(bundle), "application/json")},
+        headers=auth_headers(client),
+    )
+    patient_id = upload_response.json()["patient_id"]
+
+    response = client.post(
+        f"/api/patients/{patient_id}/chat",
+        json={"question": "Lungs problem?"},
+        headers=auth_headers(client, "clinician"),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["confidence"] == "low"
+    assert payload["retrieval_strategy"] == "keyword_match"
+    assert "could not find structured chart evidence" in payload["answer"]
+    assert payload["citations"] == []
+
+
+def test_patient_chat_keyword_match_returns_only_matching_resource_with_high_confidence(client):
+    bundle = load_sample_bundle()
+    bundle["entry"].append(
+        {
+            "resource": {
+                "resourceType": "Observation",
+                "id": "observation-lung-function-001",
+                "subject": {"reference": "Patient/patient-001"},
+                "code": {"coding": [{"code": "lung-function", "display": "Lung function panel"}]},
+                "valueString": "Within expected range",
+                "effectiveDateTime": "2026-08-20T09:00:00Z",
+            }
+        }
+    )
+    upload_response = client.post(
+        "/api/upload",
+        files={"file": ("patient_bundle_with_lung_result.json", json.dumps(bundle), "application/json")},
+        headers=auth_headers(client),
+    )
+    patient_id = upload_response.json()["patient_id"]
+
+    response = client.post(
+        f"/api/patients/{patient_id}/chat",
+        json={"question": "Lungs problem?"},
+        headers=auth_headers(client, "clinician"),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["confidence"] == "high"
+    assert payload["retrieval_strategy"] == "keyword_match"
+    assert len(payload["citations"]) == 1
+    assert payload["citations"][0]["source_record_id"] == "observation-lung-function-001"
+    assert "Lung function panel was recorded as Within expected range" in payload["answer"]
+
+
 def test_patient_chat_refuses_treatment_advice(client):
     bundle = load_sample_bundle()
     upload_response = client.post(

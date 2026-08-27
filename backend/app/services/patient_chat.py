@@ -39,6 +39,45 @@ TREATMENT_ADVICE_TERMS = (
     "treatment plan",
 )
 
+KEYWORD_STOP_WORDS = {
+    "are",
+    "about",
+    "any",
+    "available",
+    "can",
+    "chart",
+    "could",
+    "did",
+    "does",
+    "find",
+    "for",
+    "have",
+    "has",
+    "had",
+    "how",
+    "is",
+    "issue",
+    "issues",
+    "please",
+    "patient",
+    "problem",
+    "problems",
+    "recent",
+    "record",
+    "records",
+    "show",
+    "test",
+    "tests",
+    "their",
+    "there",
+    "this",
+    "what",
+    "when",
+    "where",
+    "which",
+    "with",
+}
+
 
 def answer_patient_question(patient, question: str) -> Dict[str, Any]:
     builder = InsightBuilder(patient)
@@ -122,36 +161,34 @@ def _retrieve_evidence(patient, builder: InsightBuilder, question: str) -> Tuple
             return
         evidence.append({"citation_id": citation_id, "detail": detail, "topic": topic})
 
-    add(builder.cite_patient(), _patient_detail(patient))
-
     if uses_diabetes_a1c_strategy:
         strategies.append("diabetes_a1c")
         for condition in _matching_conditions(patient.conditions, DIABETES_TERMS):
-            add(builder.cite_condition(condition), _condition_detail(condition))
+            add(builder.cite_condition(condition), _condition_detail(condition), "condition")
         for observation in _matching_observations(patient.observations, A1C_CODES, ("a1c", "hemoglobin a1c", "hba1c"))[:8]:
             add(builder.cite_observation(observation), _observation_detail(observation), "a1c")
 
     if uses_hypertension_bp_strategy:
         strategies.append("hypertension_bp")
         for condition in _matching_conditions(patient.conditions, HYPERTENSION_TERMS):
-            add(builder.cite_condition(condition), _condition_detail(condition))
+            add(builder.cite_condition(condition), _condition_detail(condition), "condition")
         for observation in _matching_observations(patient.observations, BP_CODES, ("blood pressure", "systolic", "diastolic"))[:10]:
             add(builder.cite_observation(observation), _observation_detail(observation), "blood_pressure")
 
     if _mentions_any(question_text, ("medication", "medications", "meds", "drug", "drugs", "prescription")):
         strategies.append("medications")
         for medication in _sort_by_date(_active_medications(patient.medication_requests), "authored_on")[:10]:
-            add(builder.cite_medication(medication), _medication_detail(medication))
+            add(builder.cite_medication(medication), _medication_detail(medication), "medication")
 
     if _mentions_any(question_text, ("allergy", "allergies", "allergic")):
         strategies.append("allergies")
         for allergy in _sort_by_date(patient.allergies, "recorded_date")[:10]:
-            add(builder.cite_allergy(allergy), _allergy_detail(allergy))
+            add(builder.cite_allergy(allergy), _allergy_detail(allergy), "allergy")
 
     if _mentions_any(question_text, ("encounter", "encounters", "visit", "visits", "admission", "admissions")):
         strategies.append("encounters")
         for encounter in _sort_by_date(patient.encounters, "period_start")[:8]:
-            add(builder.cite_encounter(encounter), _encounter_detail(encounter))
+            add(builder.cite_encounter(encounter), _encounter_detail(encounter), "encounter")
 
     if not (uses_diabetes_a1c_strategy or uses_hypertension_bp_strategy) and _mentions_any(
         question_text,
@@ -159,23 +196,33 @@ def _retrieve_evidence(patient, builder: InsightBuilder, question: str) -> Tuple
     ):
         strategies.append("recent_observations")
         for observation in _sort_by_date(patient.observations, "effective_date")[:10]:
-            add(builder.cite_observation(observation), _observation_detail(observation))
+            add(builder.cite_observation(observation), _observation_detail(observation), "observation")
 
-    if _mentions_any(question_text, ("condition", "conditions", "problem", "problems", "diagnosis", "diagnoses")):
+    if _mentions_any(question_text, ("condition", "conditions", "diagnosis", "diagnoses")):
         strategies.append("conditions")
         for condition in _sort_by_date(_active_conditions(patient.conditions), "onset_date")[:10]:
-            add(builder.cite_condition(condition), _condition_detail(condition))
+            add(builder.cite_condition(condition), _condition_detail(condition), "condition")
 
-    if len(evidence) == 1 and not strategies:
-        strategies.append("general_chart_review")
-        for condition in _sort_by_date(_active_conditions(patient.conditions), "onset_date")[:5]:
-            add(builder.cite_condition(condition), _condition_detail(condition))
-        for observation in _sort_by_date(patient.observations, "effective_date")[:8]:
-            add(builder.cite_observation(observation), _observation_detail(observation))
-        for medication in _sort_by_date(_active_medications(patient.medication_requests), "authored_on")[:5]:
-            add(builder.cite_medication(medication), _medication_detail(medication))
-        for allergy in _sort_by_date(patient.allergies, "recorded_date")[:5]:
-            add(builder.cite_allergy(allergy), _allergy_detail(allergy))
+    if not strategies:
+        strategies.append("keyword_match")
+        keyword_terms = _keyword_search_terms(question_text)
+        if _matches_keywords(_patient_search_text(patient), keyword_terms):
+            add(builder.cite_patient(), _patient_detail(patient), "keyword_match")
+        for condition in _sort_by_date(patient.conditions, "onset_date"):
+            if _matches_keywords(_condition_search_text(condition), keyword_terms):
+                add(builder.cite_condition(condition), _condition_detail(condition), "keyword_match")
+        for observation in _sort_by_date(patient.observations, "effective_date"):
+            if _matches_keywords(_observation_search_text(observation), keyword_terms):
+                add(builder.cite_observation(observation), _observation_detail(observation), "keyword_match")
+        for medication in _sort_by_date(patient.medication_requests, "authored_on"):
+            if _matches_keywords(_medication_search_text(medication), keyword_terms):
+                add(builder.cite_medication(medication), _medication_detail(medication), "keyword_match")
+        for allergy in _sort_by_date(patient.allergies, "recorded_date"):
+            if _matches_keywords(_allergy_search_text(allergy), keyword_terms):
+                add(builder.cite_allergy(allergy), _allergy_detail(allergy), "keyword_match")
+        for encounter in _sort_by_date(patient.encounters, "period_start"):
+            if _matches_keywords(_encounter_search_text(encounter), keyword_terms):
+                add(builder.cite_encounter(encounter), _encounter_detail(encounter), "keyword_match")
 
     return evidence[:24], ", ".join(strategies)
 
@@ -380,9 +427,7 @@ def _deterministic_answer(question: str, evidence: Sequence[Dict[str, Any]]) -> 
     if not evidence:
         return "I could not find structured chart evidence that answers this question in the available patient records."
 
-    evidence_lines = [item["detail"] for item in evidence[1:6] or evidence[:5]]
-    if not evidence_lines:
-        evidence_lines = [evidence[0]["detail"]]
+    evidence_lines = [item["detail"] for item in evidence[:5]]
 
     return (
         "From the available chart records: "
@@ -391,7 +436,10 @@ def _deterministic_answer(question: str, evidence: Sequence[Dict[str, Any]]) -> 
     )
 
 
-def _missing_specific_observation_answer(question: str, evidence: Sequence[Dict[str, Any]]) -> Optional[str]:
+def _missing_specific_observation_answer(
+    question: str,
+    evidence: Sequence[Dict[str, Any]],
+) -> Optional[str]:
     question_text = _lower(question)
     if _asks_about_a1c(question_text) and not any(item.get("topic") == "a1c" for item in evidence):
         return (
@@ -409,7 +457,17 @@ def _missing_specific_observation_answer(question: str, evidence: Sequence[Dict[
 
 
 def _deterministic_confidence(evidence: Sequence[Dict[str, Any]]) -> str:
-    return "high" if any(not item["citation_id"].startswith("Patient:") for item in evidence) else "low"
+    direct_topics = {
+        "a1c",
+        "allergy",
+        "blood_pressure",
+        "condition",
+        "encounter",
+        "medication",
+        "observation",
+        "keyword_match",
+    }
+    return "high" if any(item.get("topic") in direct_topics for item in evidence) else "low"
 
 
 def _refusal_answer(evidence: Sequence[Dict[str, Any]]) -> str:
@@ -542,6 +600,51 @@ def _asks_about_blood_pressure(question_text: str) -> bool:
         or "diastolic" in question_text
         or " bp " in f" {question_text} "
     )
+
+
+def _keyword_search_terms(question_text: str) -> Tuple[str, ...]:
+    normalized = "".join(character if character.isalnum() else " " for character in question_text)
+    base_terms = {
+        token
+        for token in normalized.split()
+        if len(token) >= 3 and token not in KEYWORD_STOP_WORDS
+    }
+    terms = set(base_terms)
+    for term in base_terms:
+        if term.endswith("ies") and len(term) > 4:
+            terms.add(f"{term[:-3]}y")
+        elif term.endswith("s") and not term.endswith("ss") and len(term) > 3:
+            terms.add(term[:-1])
+    return tuple(sorted(terms))
+
+
+def _matches_keywords(searchable_text: str, terms: Sequence[str]) -> bool:
+    lowered_text = _lower(searchable_text)
+    return bool(terms) and any(term in lowered_text for term in terms)
+
+
+def _patient_search_text(patient) -> str:
+    return f"{patient.full_name} {patient.fhir_patient_id} {patient.gender} {patient.birth_date}"
+
+
+def _condition_search_text(condition) -> str:
+    return f"{condition.condition_name} {condition.condition_code} {condition.clinical_status}"
+
+
+def _observation_search_text(observation) -> str:
+    return f"{observation.observation_name} {observation.observation_code} {observation.value} {observation.unit}"
+
+
+def _medication_search_text(medication) -> str:
+    return f"{medication.medication_name} {medication.medication_code} {medication.status} {medication.intent}"
+
+
+def _allergy_search_text(allergy) -> str:
+    return f"{allergy.allergy_name} {allergy.allergy_code} {allergy.clinical_status} {allergy.criticality}"
+
+
+def _encounter_search_text(encounter) -> str:
+    return f"{encounter.encounter_type} {encounter.encounter_class} {encounter.status}"
 
 
 def _output_text(payload: Dict[str, Any]) -> str:

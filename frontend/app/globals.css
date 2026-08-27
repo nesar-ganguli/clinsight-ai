@@ -304,8 +304,8 @@ select {
 .workspace-welcome-copy h1 {
   max-width: 720px;
   margin: 0;
-  font-size: clamp(2rem, 4vw, 3.5rem);
-  line-height: 1;
+  font-size: clamp(1.75rem, 3vw, 2.75rem);
+  line-height: 1.08;
 }
 
 .workspace-welcome-copy > p {

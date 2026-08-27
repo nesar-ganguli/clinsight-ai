@@ -48,6 +48,17 @@ const ROLE_PRESENTATION: Record<UserRole, {label: string; focus: string; feature
 };
 
 
+function welcomeName(fullName: string) {
+  const nameParts = fullName.trim().split(/\s+/).filter(Boolean);
+  const firstPart = nameParts[0] || fullName;
+  const isDoctorTitle = firstPart.replace(/\.$/, "").toLowerCase() === "dr";
+
+  return isDoctorTitle && nameParts[1]
+    ? `${firstPart} ${nameParts[1]}`
+    : firstPart;
+}
+
+
 export function WorkspaceWelcome({user, latestUpload}: {user: AuthUser | null; latestUpload: UploadResponse | null}) {
   if (!user) {
     return (
@@ -68,7 +79,7 @@ export function WorkspaceWelcome({user, latestUpload}: {user: AuthUser | null; l
   }
 
   const presentation = ROLE_PRESENTATION[user.role];
-  const firstName = (user.full_name || user.username).trim().split(/\s+/)[0];
+  const displayName = welcomeName(user.full_name || user.username);
   const capabilities = presentation.featuredPermissions
     .filter((permission) => hasPermission(user, permission))
     .map((permission) => PERMISSION_LABELS[permission]);
@@ -77,7 +88,7 @@ export function WorkspaceWelcome({user, latestUpload}: {user: AuthUser | null; l
     <section className="workspace-overview">
       <div className="workspace-welcome-copy">
         <span className="workspace-overview-eyebrow">{presentation.label} workspace</span>
-        <h1>Welcome back, {firstName}.</h1>
+        <h1>Welcome back, {displayName}.</h1>
         <p>{presentation.focus}</p>
 
         {latestUpload ? (
