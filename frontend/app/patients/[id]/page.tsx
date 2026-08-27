@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { PatientChatPanel } from "@/components/patient-chat-panel";
+import { WorkspaceHeader } from "@/components/workspace-header";
 import { getCurrentUser, getPatient, getPatientAiInsights, getQualityAlerts } from "@/lib/api";
 import { canViewCareGaps, canViewInsights, canViewQuality, canViewSourceMetadata, TOKEN_STORAGE_KEY } from "@/lib/auth";
 import { buildTimeline } from "@/lib/timeline";
@@ -44,10 +45,10 @@ export default async function PatientDetailPage({
 
   const user = await getCurrentUser(token);
   const patient = await getPatient(id, token);
-  const quality = canViewQuality(user.role)
+  const quality = canViewQuality(user)
     ? await getQualityAlerts(id, token)
     : {patient_id: Number(id), alerts: []};
-  const insights = canViewInsights(user.role) || canViewCareGaps(user.role)
+  const insights = canViewInsights(user) || canViewCareGaps(user)
     ? await getPatientAiInsights(id, token)
     : {
         patient_id: Number(id),
@@ -84,7 +85,7 @@ export default async function PatientDetailPage({
     return (
       <div className="citation-row" aria-label="Source records">
         {citations.map((citation) => {
-          const sourceLabel = canViewSourceMetadata(user.role) ? formatSourceLabel(citation) : "";
+          const sourceLabel = canViewSourceMetadata(user) ? formatSourceLabel(citation) : "";
           return (
             <span
               key={citation.id}
@@ -102,6 +103,7 @@ export default async function PatientDetailPage({
 
   return (
     <main className="shell">
+      <WorkspaceHeader user={user} activeSection="patients" />
       <div className="page-header">
         <Link href="/" className="back-link">
           ← Back to workspace
@@ -112,7 +114,7 @@ export default async function PatientDetailPage({
           FHIR ID {patient.fhir_patient_id || "Unavailable"} • {patient.gender || "Gender unknown"} •{" "}
           {patient.birth_date || "Birth date unavailable"}
         </p>
-        {canViewSourceMetadata(user.role) ? (
+        {canViewSourceMetadata(user) ? (
           <p>
             Source {patient.source_system || "Unavailable"} • Record {patient.source_record_id || "Unavailable"} • Batch{" "}
             {patient.ingestion_batch_id || "Unavailable"}
@@ -123,7 +125,7 @@ export default async function PatientDetailPage({
           <span className="pill">{patient.conditions.length} conditions</span>
           <span className="pill">{patient.observations.length} observations</span>
           <span className="pill">{patient.encounters.length} encounters</span>
-          <span className="pill">{quality.alerts.length} quality alerts</span>
+          {canViewQuality(user) ? <span className="pill">{quality.alerts.length} quality alerts</span> : null}
         </div>
         <div className="allergy-strip" aria-label="Patient allergies">
           <span className="allergy-label">Allergies</span>
@@ -159,6 +161,7 @@ export default async function PatientDetailPage({
 
       <section className="detail-grid">
         <div className="stack">
+          {canViewInsights(user) ? (
           <section className="panel summary-card">
             <div className="panel-header">
               <div>
@@ -168,9 +171,6 @@ export default async function PatientDetailPage({
               </div>
             </div>
             <div className="panel-body insight-stack">
-              {!canViewInsights(user.role) ? (
-                <div className="empty-state">Your role does not include grounded AI summary access.</div>
-              ) : null}
               {insights.summary_sections.map((section) => (
                 <section key={section.title} className="insight-section">
                   <h3>{section.title}</h3>
@@ -186,8 +186,9 @@ export default async function PatientDetailPage({
               ))}
             </div>
           </section>
+          ) : null}
 
-          <PatientChatPanel patientId={patient.id} showSourceMetadata={canViewSourceMetadata(user.role)} />
+          <PatientChatPanel patientId={patient.id} showSourceMetadata={canViewSourceMetadata(user)} />
 
           <section className="panel">
             <div className="panel-header">
@@ -218,6 +219,7 @@ export default async function PatientDetailPage({
         </div>
 
         <div className="stack">
+          {canViewCareGaps(user) ? (
           <section className="panel">
             <div className="panel-header">
               <div>
@@ -227,10 +229,7 @@ export default async function PatientDetailPage({
             </div>
             <div className="panel-body">
               <div className="list">
-                {!canViewCareGaps(user.role) ? (
-                  <div className="empty-state">Care gap suggestions are available to care coordinators and admins.</div>
-                ) : null}
-                {canViewCareGaps(user.role) ? insights.care_gaps.map((gap) => (
+                {insights.care_gaps.map((gap) => (
                   <article key={gap.code} className={`care-gap-card priority-${gap.priority}`}>
                     <div className="alert-header">
                       <strong>{gap.title}</strong>
@@ -240,12 +239,13 @@ export default async function PatientDetailPage({
                     <div className="meta-line">{gap.rationale}</div>
                     {renderCitations(gap.citation_ids)}
                   </article>
-                )) : null}
+                ))}
               </div>
             </div>
           </section>
+          ) : null}
 
-          {canViewInsights(user.role) ? (
+          {canViewInsights(user) ? (
           <section className="panel">
             <div className="panel-header">
               <div>
@@ -270,7 +270,7 @@ export default async function PatientDetailPage({
           </section>
           ) : null}
 
-          {canViewInsights(user.role) ? (
+          {canViewInsights(user) ? (
           <section className="panel">
             <div className="panel-header">
               <div>
@@ -308,7 +308,7 @@ export default async function PatientDetailPage({
           </section>
           ) : null}
 
-          {canViewQuality(user.role) ? (
+          {canViewQuality(user) ? (
           <section className="panel">
             <div className="panel-header">
               <div>
