@@ -75,7 +75,9 @@ export function PatientListPanel({ refreshKey }: Props) {
         {error ? <div className="status-banner status-error">{error}</div> : null}
 
         {!loading && !error && patients.length === 0 ? (
-          <div className="empty-state">No patients found yet. Upload a FHIR bundle to populate the workspace.</div>
+          <div className="empty-state">
+            No patients match this search. If the directory is empty, an administrator or data reviewer must import records.
+          </div>
         ) : null}
 
         <div className="list">

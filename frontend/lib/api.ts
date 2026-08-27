@@ -2,14 +2,18 @@ import {
   AuthUser,
   AuditLogListResponse,
   DemoUsersResponse,
+  DemoAuthAccountListResponse,
   ExternalFhirImportResponse,
   ExternalFhirPatientListResponse,
+  IngestionBatchListResponse,
   LoginResponse,
   Patient,
   PatientAiInsightsResponse,
   PatientChatResponse,
   PatientListResponse,
   QualityAlertsResponse,
+  QuarantinePayload,
+  QuarantineRecordListResponse,
   UploadResponse,
 } from "@/lib/types";
 
@@ -64,6 +68,10 @@ export function login(username: string, password: string) {
   });
 }
 
+export function listDemoAuthAccounts() {
+  return request<DemoAuthAccountListResponse>("/api/auth/demo-accounts");
+}
+
 export function getCurrentUser(token?: string | null) {
   return request<AuthUser>("/api/auth/me", {token});
 }
@@ -105,6 +113,35 @@ export function getDemoUsers() {
 
 export function listAuditLogs(token?: string | null) {
   return request<AuditLogListResponse>("/api/audit-logs?limit=100&offset=0", {token});
+}
+
+export function listIngestionBatches(token?: string | null) {
+  return request<IngestionBatchListResponse>("/api/ingestion-batches?limit=100&offset=0", {token});
+}
+
+export function listQuarantineRecords(
+  batchId: number,
+  filters?: {resourceType?: string; errorCode?: string; search?: string},
+  token?: string | null,
+) {
+  const params = new URLSearchParams({limit: "200", offset: "0"});
+  if (filters?.resourceType) {
+    params.set("resource_type", filters.resourceType);
+  }
+  if (filters?.errorCode) {
+    params.set("error_code", filters.errorCode);
+  }
+  if (filters?.search) {
+    params.set("search", filters.search);
+  }
+  return request<QuarantineRecordListResponse>(
+    `/api/ingestion-batches/${batchId}/quarantine-records?${params.toString()}`,
+    {token},
+  );
+}
+
+export function getQuarantinePayload(recordId: number, token?: string | null) {
+  return request<QuarantinePayload>(`/api/quarantine-records/${recordId}/payload`, {token});
 }
 
 export function searchSmartFhirPatients(search?: string) {

@@ -209,18 +209,45 @@ export type DemoUsersResponse = {
 
 export type UserRole = "admin" | "clinician" | "care_coordinator" | "data_reviewer";
 
+export type Permission =
+  | "view_patient_directory"
+  | "view_patient_charts"
+  | "view_grounded_ai_summary"
+  | "view_care_gaps"
+  | "view_quality_alerts"
+  | "view_source_metadata"
+  | "view_patient_chat"
+  | "upload_fhir_bundle"
+  | "import_external_fhir"
+  | "investigate_ingestion"
+  | "view_audit_logs"
+  | "view_pipeline_runs"
+  | "record_dbt_transformation_audit"
+  | "view_demo_users";
+
 export type AuthUser = {
   id: number;
   username: string;
   full_name: string | null;
   role: UserRole;
-  permissions: string[];
+  permissions: Permission[];
 };
 
 export type LoginResponse = {
   access_token: string;
   token_type: "bearer";
   user: AuthUser;
+};
+
+export type DemoAuthAccount = {
+  username: string;
+  full_name: string | null;
+  role: UserRole;
+  permissions: Permission[];
+};
+
+export type DemoAuthAccountListResponse = {
+  items: DemoAuthAccount[];
 };
 
 export type AuditLog = {
@@ -241,4 +268,52 @@ export type AuditLogListResponse = {
   total: number;
   limit: number;
   offset: number;
+};
+
+export type IngestionBatch = {
+  id: number;
+  source_system_id: number;
+  source_system_name: string;
+  source_system_type: string;
+  ingestion_type: string;
+  filename: string | null;
+  status: string;
+  record_count: number;
+  accepted_count: number;
+  rejected_count: number;
+  quarantine_count: number;
+  error_message: string | null;
+  started_at: string;
+  completed_at: string | null;
+};
+
+export type IngestionBatchListResponse = {
+  items: IngestionBatch[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type QuarantineRecordSummary = {
+  id: number;
+  ingestion_batch_id: number;
+  source_system_id: number;
+  resource_type: string;
+  source_record_id: string | null;
+  error_code: string;
+  error_message: string;
+  created_at: string;
+};
+
+export type QuarantineRecordListResponse = {
+  items: QuarantineRecordSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type QuarantinePayload = {
+  id: number;
+  ingestion_batch_id: number;
+  raw_payload: unknown;
 };
