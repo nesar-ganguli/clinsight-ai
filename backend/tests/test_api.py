@@ -949,8 +949,10 @@ def test_patient_chat_answers_with_grounded_citations_and_audit(client):
     assert payload["patient_id"] == patient_id
     assert payload["llm_used"] is False
     assert payload["citations"]
-    assert "diabetes_a1c" in payload["retrieval_strategy"]
-    assert any(citation["resource_type"] == "Observation" for citation in payload["citations"])
+    assert payload["confidence"] == "low"
+    assert payload["retrieval_strategy"] == "diabetes_a1c"
+    assert "No structured A1c observation was found" in payload["answer"]
+    assert not any(citation["resource_type"] == "Observation" for citation in payload["citations"])
 
     db = SessionLocal()
     try:
@@ -964,6 +966,45 @@ def test_patient_chat_answers_with_grounded_citations_and_audit(client):
         assert chat_audit.event_metadata["citation_count"] == len(payload["citations"])
     finally:
         db.close()
+
+
+def test_patient_chat_a1c_question_retrieves_only_matching_observation(client):
+    bundle = load_sample_bundle()
+    bundle["entry"].append(
+        {
+            "resource": {
+                "resourceType": "Observation",
+                "id": "observation-a1c-001",
+                "subject": {"reference": "Patient/patient-001"},
+                "code": {"coding": [{"code": "4548-4", "display": "Hemoglobin A1c"}]},
+                "valueQuantity": {"value": 7.1, "unit": "%"},
+                "effectiveDateTime": "2026-08-19T09:00:00Z",
+            }
+        }
+    )
+    upload_response = client.post(
+        "/api/upload",
+        files={"file": ("patient_bundle_with_a1c.json", json.dumps(bundle), "application/json")},
+        headers=auth_headers(client),
+    )
+    patient_id = upload_response.json()["patient_id"]
+
+    response = client.post(
+        f"/api/patients/{patient_id}/chat",
+        json={"question": "Has this patient had an A1c recently?"},
+        headers=auth_headers(client, "clinician"),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    observation_citations = [
+        citation for citation in payload["citations"] if citation["resource_type"] == "Observation"
+    ]
+    assert payload["confidence"] == "high"
+    assert payload["retrieval_strategy"] == "diabetes_a1c"
+    assert len(observation_citations) == 1
+    assert observation_citations[0]["source_record_id"] == "observation-a1c-001"
+    assert "Hemoglobin A1c was recorded as 7.1 %" in payload["answer"]
 
 
 def test_patient_chat_refuses_treatment_advice(client):
@@ -989,6 +1030,18 @@ def test_patient_chat_refuses_treatment_advice(client):
 
 def test_patient_chat_uses_github_models_when_configured(client, monkeypatch):
     bundle = load_sample_bundle()
+    bundle["entry"].append(
+        {
+            "resource": {
+                "resourceType": "Observation",
+                "id": "observation-a1c-github-001",
+                "subject": {"reference": "Patient/patient-001"},
+                "code": {"coding": [{"code": "4548-4", "display": "Hemoglobin A1c"}]},
+                "valueQuantity": {"value": 7.1, "unit": "%"},
+                "effectiveDateTime": "2026-08-19T09:00:00Z",
+            }
+        }
+    )
     upload_response = client.post(
         "/api/upload",
         files={"file": ("patient_bundle_1.json", json.dumps(bundle), "application/json")},
@@ -1009,7 +1062,7 @@ def test_patient_chat_uses_github_models_when_configured(client, monkeypatch):
                                 {
                                     "answer": "The available records include a documented A1c-related observation.",
                                     "confidence": "high",
-                                    "citation_ids": ["Observation:1"],
+                                    "citation_ids": [self.a1c_citation_id],
                                     "safety_notes": ["Grounded to retrieved evidence."],
                                 }
                             )
@@ -1021,10 +1074,18 @@ def test_patient_chat_uses_github_models_when_configured(client, monkeypatch):
     captured = {}
 
     def fake_post(url, headers=None, json=None, timeout=None):
+        request_content = __import__("json").loads(json["messages"][1]["content"])
+        a1c_citation_id = next(
+            item["citation_id"]
+            for item in request_content["evidence"]
+            if item["resource_type"] == "Observation"
+        )
         captured["url"] = url
         captured["headers"] = headers
         captured["json"] = json
-        return FakeGithubResponse()
+        response = FakeGithubResponse()
+        response.a1c_citation_id = a1c_citation_id
+        return response
 
     monkeypatch.setattr("app.services.patient_chat.settings.llm_provider", "github")
     monkeypatch.setattr("app.services.patient_chat.settings.github_models_token", "ghp_test")

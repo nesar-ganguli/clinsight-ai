@@ -66,6 +66,19 @@ def answer_patient_question(patient, question: str) -> Dict[str, Any]:
             refused=True,
         )
 
+    missing_observation_answer = _missing_specific_observation_answer(normalized_question, evidence)
+    if missing_observation_answer:
+        return _response(
+            patient,
+            normalized_question,
+            missing_observation_answer,
+            "low",
+            "ClinSight grounded chart assistant deterministic fallback",
+            strategy,
+            citations,
+            safety_notes,
+        )
+
     llm_answer = _answer_with_llm(normalized_question, evidence, citations)
     if llm_answer:
         validation_errors = _validate_llm_answer(llm_answer, {citation["id"] for citation in citations})
@@ -87,7 +100,7 @@ def answer_patient_question(patient, question: str) -> Dict[str, Any]:
         patient,
         normalized_question,
         _deterministic_answer(normalized_question, evidence),
-        "high" if evidence else "low",
+        _deterministic_confidence(evidence),
         "ClinSight grounded chart assistant deterministic fallback",
         strategy,
         citations,
@@ -99,27 +112,31 @@ def _retrieve_evidence(patient, builder: InsightBuilder, question: str) -> Tuple
     question_text = _lower(question)
     evidence: List[Dict[str, Any]] = []
     strategies = []
+    asks_about_a1c = _asks_about_a1c(question_text)
+    asks_about_blood_pressure = _asks_about_blood_pressure(question_text)
+    uses_diabetes_a1c_strategy = asks_about_a1c or _mentions_any(question_text, DIABETES_TERMS)
+    uses_hypertension_bp_strategy = asks_about_blood_pressure or _mentions_any(question_text, HYPERTENSION_TERMS)
 
-    def add(citation_id: str, detail: str):
+    def add(citation_id: str, detail: str, topic: Optional[str] = None):
         if any(item["citation_id"] == citation_id for item in evidence):
             return
-        evidence.append({"citation_id": citation_id, "detail": detail})
+        evidence.append({"citation_id": citation_id, "detail": detail, "topic": topic})
 
     add(builder.cite_patient(), _patient_detail(patient))
 
-    if _mentions_any(question_text, DIABETES_TERMS) or "a1c" in question_text or "hba1c" in question_text:
+    if uses_diabetes_a1c_strategy:
         strategies.append("diabetes_a1c")
         for condition in _matching_conditions(patient.conditions, DIABETES_TERMS):
             add(builder.cite_condition(condition), _condition_detail(condition))
         for observation in _matching_observations(patient.observations, A1C_CODES, ("a1c", "hemoglobin a1c", "hba1c"))[:8]:
-            add(builder.cite_observation(observation), _observation_detail(observation))
+            add(builder.cite_observation(observation), _observation_detail(observation), "a1c")
 
-    if _mentions_any(question_text, HYPERTENSION_TERMS) or "blood pressure" in question_text or " bp" in f" {question_text}":
+    if uses_hypertension_bp_strategy:
         strategies.append("hypertension_bp")
         for condition in _matching_conditions(patient.conditions, HYPERTENSION_TERMS):
             add(builder.cite_condition(condition), _condition_detail(condition))
         for observation in _matching_observations(patient.observations, BP_CODES, ("blood pressure", "systolic", "diastolic"))[:10]:
-            add(builder.cite_observation(observation), _observation_detail(observation))
+            add(builder.cite_observation(observation), _observation_detail(observation), "blood_pressure")
 
     if _mentions_any(question_text, ("medication", "medications", "meds", "drug", "drugs", "prescription")):
         strategies.append("medications")
@@ -136,7 +153,10 @@ def _retrieve_evidence(patient, builder: InsightBuilder, question: str) -> Tuple
         for encounter in _sort_by_date(patient.encounters, "period_start")[:8]:
             add(builder.cite_encounter(encounter), _encounter_detail(encounter))
 
-    if _mentions_any(question_text, ("lab", "labs", "observation", "observations", "vital", "vitals", "result", "results", "recent")):
+    if not (uses_diabetes_a1c_strategy or uses_hypertension_bp_strategy) and _mentions_any(
+        question_text,
+        ("lab", "labs", "observation", "observations", "vital", "vitals", "result", "results", "recent"),
+    ):
         strategies.append("recent_observations")
         for observation in _sort_by_date(patient.observations, "effective_date")[:10]:
             add(builder.cite_observation(observation), _observation_detail(observation))
@@ -146,7 +166,7 @@ def _retrieve_evidence(patient, builder: InsightBuilder, question: str) -> Tuple
         for condition in _sort_by_date(_active_conditions(patient.conditions), "onset_date")[:10]:
             add(builder.cite_condition(condition), _condition_detail(condition))
 
-    if len(evidence) == 1:
+    if len(evidence) == 1 and not strategies:
         strategies.append("general_chart_review")
         for condition in _sort_by_date(_active_conditions(patient.conditions), "onset_date")[:5]:
             add(builder.cite_condition(condition), _condition_detail(condition))
@@ -371,6 +391,27 @@ def _deterministic_answer(question: str, evidence: Sequence[Dict[str, Any]]) -> 
     )
 
 
+def _missing_specific_observation_answer(question: str, evidence: Sequence[Dict[str, Any]]) -> Optional[str]:
+    question_text = _lower(question)
+    if _asks_about_a1c(question_text) and not any(item.get("topic") == "a1c" for item in evidence):
+        return (
+            "No structured A1c observation was found in the available patient records, "
+            "so I cannot confirm that the patient had an A1c recently."
+        )
+    if _asks_about_blood_pressure(question_text) and not any(
+        item.get("topic") == "blood_pressure" for item in evidence
+    ):
+        return (
+            "No structured blood pressure observation was found in the available patient records, "
+            "so I cannot confirm that the patient had a blood pressure measurement recently."
+        )
+    return None
+
+
+def _deterministic_confidence(evidence: Sequence[Dict[str, Any]]) -> str:
+    return "high" if any(not item["citation_id"].startswith("Patient:") for item in evidence) else "low"
+
+
 def _refusal_answer(evidence: Sequence[Dict[str, Any]]) -> str:
     if evidence:
         return (
@@ -488,6 +529,19 @@ def _asks_for_treatment_advice(text: str) -> bool:
 
 def _mentions_any(text: str, terms: Sequence[str]) -> bool:
     return any(term in text for term in terms)
+
+
+def _asks_about_a1c(question_text: str) -> bool:
+    return "a1c" in question_text or "hba1c" in question_text
+
+
+def _asks_about_blood_pressure(question_text: str) -> bool:
+    return (
+        "blood pressure" in question_text
+        or "systolic" in question_text
+        or "diastolic" in question_text
+        or " bp " in f" {question_text} "
+    )
 
 
 def _output_text(payload: Dict[str, Any]) -> str:
