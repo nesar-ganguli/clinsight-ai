@@ -1,0 +1,22 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "flow-update-retain-001",
+        "name": [{"given": ["Olivia"], "family": "Carter"}]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "flow-update-condition-retained",
+        "subject": {"reference": "Patient/flow-update-retain-001"},
+        "clinicalStatus": {"coding": [{"code": "resolved"}]},
+        "code": {"coding": [{"code": "38341003", "display": "Hypertension after update"}]}
+      }
+    }
+  ]
+}

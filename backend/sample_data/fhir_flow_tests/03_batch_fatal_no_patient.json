@@ -1,0 +1,14 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "flow-fatal-condition-without-patient",
+        "subject": {"reference": "Patient/missing-patient"},
+        "code": {"coding": [{"code": "38341003", "display": "Hypertension"}]}
+      }
+    }
+  ]
+}

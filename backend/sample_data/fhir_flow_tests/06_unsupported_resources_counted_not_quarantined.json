@@ -1,0 +1,34 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "flow-unsupported-001",
+        "name": [{"given": ["Samuel"], "family": "Brooks"}]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Practitioner",
+        "id": "flow-practitioner-001"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Organization",
+        "id": "flow-organization-001"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "flow-unsupported-observation-valid",
+        "subject": {"reference": "Patient/flow-unsupported-001"},
+        "code": {"coding": [{"code": "8867-4", "display": "Heart rate"}]},
+        "valueString": "76"
+      }
+    }
+  ]
+}

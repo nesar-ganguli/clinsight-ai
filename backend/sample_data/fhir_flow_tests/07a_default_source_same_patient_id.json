@@ -1,0 +1,21 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "flow-shared-patient-id",
+        "name": [{"given": ["Jordan"], "family": "Taylor"}]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "flow-default-condition",
+        "subject": {"reference": "Patient/flow-shared-patient-id"},
+        "code": {"coding": [{"code": "38341003", "display": "Hypertension"}]}
+      }
+    }
+  ]
+}

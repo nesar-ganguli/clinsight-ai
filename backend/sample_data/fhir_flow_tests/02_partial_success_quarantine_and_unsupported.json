@@ -1,0 +1,74 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "flow-partial-001",
+        "name": [{"given": ["Marcus"], "family": "Lee"}],
+        "gender": "male",
+        "birthDate": "1975-06-10"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "flow-partial-condition-valid",
+        "subject": {"reference": "Patient/flow-partial-001"},
+        "clinicalStatus": {"coding": [{"code": "active"}]},
+        "code": {"coding": [{"code": "44054006", "display": "Type 2 diabetes mellitus"}]},
+        "onsetDateTime": "2024-03-01"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "flow-partial-observation-invalid-date",
+        "subject": {"reference": "Patient/flow-partial-001"},
+        "code": {"coding": [{"code": "4548-4", "display": "Hemoglobin A1c"}]},
+        "valueQuantity": {"value": 8.4, "unit": "%"},
+        "effectiveDateTime": "definitely-not-a-fhir-date"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Encounter",
+        "id": "flow-partial-encounter-wrong-patient",
+        "subject": {"reference": "Patient/someone-else"},
+        "status": "finished",
+        "class": {"code": "AMB"},
+        "period": {"start": "2026-08-20T12:00:00Z"}
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "id": "flow-partial-medication-missing-status",
+        "subject": {"reference": "Patient/flow-partial-001"},
+        "intent": "order",
+        "medicationCodeableConcept": {
+          "coding": [{"code": "860975", "display": "Metformin 500 MG Oral Tablet"}]
+        }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "AllergyIntolerance",
+        "id": "flow-partial-allergy-valid",
+        "patient": {"reference": "Patient/flow-partial-001"},
+        "clinicalStatus": {"coding": [{"code": "active"}]},
+        "verificationStatus": {"coding": [{"code": "confirmed"}]},
+        "code": {"coding": [{"code": "91936005", "display": "Allergy to penicillin"}]},
+        "criticality": "high"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Practitioner",
+        "id": "flow-partial-practitioner-unsupported",
+        "name": [{"text": "Unsupported Practitioner"}]
+      }
+    }
+  ]
+}

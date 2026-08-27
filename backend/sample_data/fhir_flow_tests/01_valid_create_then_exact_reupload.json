@@ -1,0 +1,35 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "flow-valid-001",
+        "name": [{"given": ["Elena"], "family": "Martinez"}],
+        "gender": "female",
+        "birthDate": "1985-02-14"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "flow-valid-condition-001",
+        "subject": {"reference": "Patient/flow-valid-001"},
+        "clinicalStatus": {"coding": [{"code": "active"}]},
+        "code": {"coding": [{"code": "38341003", "display": "Hypertension"}]},
+        "onsetDateTime": "2025-01-01"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "flow-valid-observation-001",
+        "subject": {"reference": "Patient/flow-valid-001"},
+        "code": {"coding": [{"code": "8867-4", "display": "Heart rate"}]},
+        "valueQuantity": {"value": 72, "unit": "bpm"},
+        "effectiveDateTime": "2026-08-20T14:00:00Z"
+      }
+    }
+  ]
+}

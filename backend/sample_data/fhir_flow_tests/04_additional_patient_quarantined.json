@@ -1,0 +1,29 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "flow-primary-patient",
+        "name": [{"given": ["Aisha"], "family": "Patel"}]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "flow-additional-patient",
+        "name": [{"given": ["Daniel"], "family": "Kim"}]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "flow-primary-observation",
+        "subject": {"reference": "Patient/flow-primary-patient"},
+        "code": {"coding": [{"code": "8867-4", "display": "Heart rate"}]},
+        "valueQuantity": {"value": 70, "unit": "bpm"}
+      }
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "meta": {
+    "source": "smart-health-it-r4-sandbox",
+    "tag": [{"code": "smart-health-it-r4-sandbox"}]
+  },
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "flow-shared-patient-id",
+        "name": [{"given": ["Jordan"], "family": "Taylor"}]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "flow-smart-condition",
+        "subject": {"reference": "Patient/flow-shared-patient-id"},
+        "code": {"coding": [{"code": "44054006", "display": "Type 2 diabetes mellitus"}]}
+      }
+    }
+  ]
+}

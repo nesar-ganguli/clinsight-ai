@@ -1,0 +1,21 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "name": [{"given": ["Ethan"], "family": "Clark"}]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "flow-fatal-observation",
+        "subject": {"reference": "Patient/unknown"},
+        "code": {"coding": [{"code": "8867-4", "display": "Heart rate"}]},
+        "valueString": "80"
+      }
+    }
+  ]
+}
