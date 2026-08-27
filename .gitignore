@@ -26,6 +26,7 @@ clinsight.db
 # Frontend
 frontend/.next/
 frontend/.next-dev/
+frontend/.next-build/
 frontend/node_modules/
 
 # dbt
