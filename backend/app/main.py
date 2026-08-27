@@ -5,6 +5,7 @@ from app.api.routes_audit import router as audit_router
 from app.api.routes_auth import router as auth_router
 from app.api.routes_demo import router as demo_router
 from app.api.routes_external_fhir import router as external_fhir_router
+from app.api.routes_ingestion_review import router as ingestion_review_router
 from app.api.routes_upload import router as upload_router
 from app.api.routes_patient import router as patient_router
 from app.api.routes_patient_chat import router as patient_chat_router
@@ -63,6 +64,7 @@ app.add_middleware(
 app.include_router(auth_router, prefix=settings.api_v1_prefix, tags=["Auth"])
 app.include_router(audit_router, prefix=settings.api_v1_prefix, tags=["Audit"])
 app.include_router(external_fhir_router, prefix=settings.api_v1_prefix, tags=["External FHIR"])
+app.include_router(ingestion_review_router, prefix=settings.api_v1_prefix, tags=["Ingestion Review"])
 app.include_router(upload_router, prefix=settings.api_v1_prefix, tags=["Upload"])
 app.include_router(patient_router, prefix=settings.api_v1_prefix, tags=["Patients"])
 app.include_router(patient_chat_router, prefix=settings.api_v1_prefix, tags=["Patient Chat"])
