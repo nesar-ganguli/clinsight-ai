@@ -1,6 +1,6 @@
 # ClinSight AI: Current Implementation
 
-> Status snapshot: 2026-08-25, after incremental-plan Change 7 (SQL-backed patient-directory search and pagination).
+> Status snapshot: 2026-08-26, after incremental-plan Change 8, the read-only ingestion/quarantine investigation UI, and topic-specific chart-Q&A retrieval correction.
 >
 > This document describes what the repository implements today. It is based on the application source, Alembic migrations, dbt models, scripts, frontend, and tests. It intentionally distinguishes implemented behavior from product intent and production-ready behavior.
 
@@ -10,11 +10,11 @@ ClinSight AI is a working full-stack clinical chart-review demo with three conne
 
 1. A FastAPI application accepts a constrained subset of FHIR R4 Bundles, normalizes six resource types, persists patient-centric records, records source lineage, and exposes protected clinical APIs.
 2. A synthetic hospital pipeline generates operational `raw_*` data, transforms it with dbt into app-shaped clinical views, and can export those views back into uploadable FHIR Bundles. Its generation, dbt build, dbt test, and metrics steps can also run as one manually triggered Airflow DAG.
-3. A Next.js application provides role-aware workflows for FHIR ingestion, patient search, longitudinal review, quality checks, rule-grounded insights, chart Q&A, source provenance, and audit review.
+3. A Next.js application provides role-aware workflows for FHIR ingestion, ingestion-batch/quarantine investigation, patient search, longitudinal review, quality checks, rule-grounded insights, chart Q&A, source provenance, and audit review.
 
-The repository is beyond a simple upload demo: it has migrations, two clinical read paths, four demo RBAC roles, provenance tables, durable ingestion attempt states, record-level quarantine, SQL-backed unified patient-directory pagination, audit events, external SMART Health IT sandbox import, deterministic clinical rules, optional LLM-assisted chart Q&A, Docker orchestration, repeatable synthetic data, an opt-in Airflow orchestrator, and 52 passing backend tests.
+The repository is beyond a simple upload demo: it has migrations, two clinical read paths, four demo RBAC roles, provenance tables, durable ingestion and pipeline-run states, record-level quarantine with a protected investigation screen, SQL-backed unified patient-directory pagination, operational metrics APIs/scripts, audit events, external SMART Health IT sandbox import, deterministic clinical rules, optional LLM-assisted chart Q&A, Docker orchestration, repeatable synthetic data, an opt-in Airflow orchestrator, and 79 passing backend tests.
 
-It is still a demo/reference implementation rather than a production clinical system. Authentication uses locally created demo accounts and a shared password; FHIR support is intentionally narrow; patient identity is source-aware but only explicitly mapped rather than probabilistically reconciled; the AI safety checks are lightweight; and there is no production security, observability, deployment, or compliance layer.
+It is still a demo/reference implementation rather than a production clinical system. Authentication uses locally created demo accounts and a shared password; FHIR support is intentionally narrow; patient identity is source-aware but only explicitly mapped rather than probabilistically reconciled; the AI safety checks are lightweight; and there is no production security, monitoring/alerting, deployment, or compliance layer.
 
 ## Incremental change-plan status
 
@@ -27,7 +27,9 @@ It is still a demo/reference implementation rather than a production clinical sy
 | 5. Persist failed ingestion batch states | Complete and verified | Each accepted Bundle attempt first commits a `processing` batch. Clinical work then commits with `success`, or rolls back independently before the batch is finalized as `failed` with counts, completion time, and a sanitized error. |
 | 6. Quarantine record-level validation failures | Complete and verified | Invalid supported child resources are stored with source/batch linkage and raw JSON while valid siblings continue. Accepted, rejected, and unsupported counts are returned without exposing quarantined payloads. |
 | 7. Move patient pagination/search into SQL | Complete and verified | One repository query combines application and dbt patient summaries with `UNION ALL`, resolves numeric-ID overlaps in SQL, filters and sorts in SQL, and retrieves only the requested offset/limit page. |
-| 8. Minimal pipeline observability | Not implemented | Persistent pipeline-run state, metrics, and status APIs remain future work. |
+| 8. Minimal pipeline observability | Complete and verified within the local test boundary | FHIR and Airflow runs persist independent operational lifecycle/count/duration records. Protected recent-run and aggregate-metrics APIs, a metrics CLI, structured FHIR/dbt logs, and Airflow terminal-failure recording expose pipeline health without using user audit events. |
+
+After Change 8, a read-only operational investigation surface was added for admins and data reviewers. It exposes batch summaries and quarantine metadata, and requires a separate audited request before returning a raw quarantined payload. It does not change the numbered incremental plan or add remediation/replay behavior.
 
 ## System shape
 
@@ -42,10 +44,12 @@ flowchart LR
     Parser --> ORM[(App clinical tables)]
     Parser --> Quarantine[(Quarantine JSONB)]
     API --> Lineage[(Source, batch, lineage tables)]
+    API --> Runs[(Pipeline runs and metrics)]
     API --> Audit[(Users and audit logs)]
 
     Generator[Synthetic hospital generator] --> Raw[(Operational raw_* tables)]
     Airflow[Manual Airflow DAG] --> Generator
+    Airflow --> Runs
     Airflow --> Dbt
     Raw --> Dbt[dbt staging views]
     Dbt --> Marts[(analytics_clinical views)]
@@ -72,20 +76,20 @@ The API deliberately hides this distinction from most callers through [`clinical
 | --- | --- |
 | [`backend/app/main.py`](../backend/app/main.py) | Creates FastAPI, configures CORS, and registers all route groups. |
 | [`backend/app/api`](../backend/app/api) | HTTP endpoints and role dependencies. |
-| [`backend/app/services`](../backend/app/services) | FHIR parsing/ingestion, unified clinical reads, quality rules, insights, chat, authentication, audit, and SMART client. |
+| [`backend/app/services`](../backend/app/services) | FHIR parsing/ingestion, ingestion investigation queries, unified clinical reads, quality rules, insights, chat, authentication, audit, and SMART client. |
 | [`backend/app/repositories`](../backend/app/repositories) | Bounded database queries; currently the SQL-backed unified patient directory. |
 | [`backend/app/models`](../backend/app/models) | SQLAlchemy mappings for clinical, provenance, raw, staging, user, and audit tables. |
-| [`backend/alembic/versions`](../backend/alembic/versions) | Thirteen migrations representing the complete database evolution. |
+| [`backend/alembic/versions`](../backend/alembic/versions) | Fourteen migrations representing the complete database evolution. |
 | [`backend/scripts`](../backend/scripts) | Demo seeding, interview metrics, synthetic hospital generation, batch count reporting, and FHIR export. |
-| [`backend/tests`](../backend/tests) | 52 backend unit/API/configuration tests, using SQLite and mocked external services. |
+| [`backend/tests`](../backend/tests) | 79 backend unit/API/configuration tests, using SQLite and mocked external services. |
 | [`dbt/models/staging`](../dbt/models/staging) | Eight cleaning/normalization views over operational raw tables. |
 | [`dbt/models/marts/clinical`](../dbt/models/marts/clinical) | Six clinical views matching the API's patient record concepts. |
 | [`airflow/dags`](../airflow/dags) | One manually triggered synthetic-to-dbt DAG plus a dependency-light task definition used by tests. |
-| [`frontend/app`](../frontend/app) | Next.js App Router pages for workspace, login, patient detail, and audit logs. |
-| [`frontend/components`](../frontend/components) | Client-side upload, search, external import, demo-role, and chart-chat panels. |
+| [`frontend/app`](../frontend/app) | Next.js App Router pages for workspace, login, patient detail, audit logs, and ingestion/quarantine investigation. |
+| [`frontend/components`](../frontend/components) | Client-side upload, search, external import, ingestion investigation, demo-role, and chart-chat panels. |
 | [`docker-compose.yml`](../docker-compose.yml) | PostgreSQL, backend, frontend, opt-in pipeline/test/seed/metrics jobs, and an isolated `airflow` profile. |
 
-Approximate source size at this snapshot is 5,093 backend application lines, 1,234 backend script lines, 2,067 backend test lines, 2,483 frontend TypeScript/TSX/CSS lines, 934 dbt model/macro/documentation lines, and 130 Airflow image/DAG/requirement lines. Generated build, dependency, and dbt artifacts are excluded.
+Approximate source size at this snapshot is 5,850 backend application lines, 1,455 backend script lines, 2,626 backend test lines, 4,141 frontend TypeScript/TSX/CSS lines, 934 dbt model/macro/documentation lines, and 192 Airflow image/DAG/requirement lines. Generated build, dependency, and dbt artifacts are excluded.
 
 ## Runtime and configuration
 
@@ -175,6 +179,10 @@ Migration `0012_quarantine_records` adds the batch/source-linked quarantine tabl
 
 Migration `0013_patient_directory_indexes` adds a standalone index on `patient_source_identifiers.identifier_value`. The canonical application patient ID is already indexed by its primary key, while patient name, FHIR patient ID, and source record ID already have model indexes. The new standalone index avoids relying on the existing composite uniqueness index, whose leading column is `source_system_id`, for source-identifier lookup. The current contains-search syntax (`%term%`) may still require scanning candidate rows; PostgreSQL trigram/full-text search is not enabled.
 
+Migration `0014_pipeline_runs` adds the operational `pipeline_runs` table. `(pipeline_name, run_id)` is unique, while pipeline name, run ID, source system, batch ID, status, and start time are individually indexed for recent-run and filtered-metrics queries. Each row stores `processing`, `success`, or `failed` state; start/completion times and calculated duration; received, accepted, rejected, and duplicate/updated counts; and a sanitized terminal error. `batch_id` is intentionally a string rather than a foreign key because it links both integer-backed FHIR ingestion batches and Airflow's externally assigned synthetic batch identifiers.
+
+Pipeline runs are operational records separate from `audit_logs`: they describe machine workflow health, not user access or actions. FHIR runs use `fhir_ingestion` and run IDs of the form `fhir-ingestion-{ingestion_batch_id}`. The synthetic DAG uses `clinsight_hospital_pipeline` and the Airflow run ID. Both retain their source and batch identifiers so operators can trace a run to ingestion and curated-record lineage.
+
 Three FHIR sources are recognized from bundle metadata:
 
 | Source | `source_type` | Recognition |
@@ -226,24 +234,24 @@ This is a narrow product validation boundary, not full FHIR profile/terminology 
 
 [`ingest_fhir_bundle`](../backend/app/services/ingestion.py) uses two transaction phases:
 
-1. Resolve/create the source system, create a batch with `status = processing`, start time, hash, filename, and an envelope record count, then commit that source/batch transaction immediately.
+1. Resolve/create the source system; create an ingestion batch and matching `fhir_ingestion` pipeline run with `status = processing`, a shared batch ID, start time, source, and envelope record count; then commit those durable lifecycle rows immediately.
 2. Parse the Bundle and require a usable Patient. Classify each remaining entry as accepted, rejected, or unsupported.
 3. Look up `(source_system_id, incoming FHIR patient ID)` in `patient_source_identifiers`.
 4. Load the mapped canonical patient, or create a new patient and source-identifier mapping when no mapping exists. No name/DOB or fuzzy matching is attempted.
 5. For every valid supported child, find a row by `(patient_id, source_system, fhir_resource_id)` and update it, or insert it when absent.
 6. Insert one `quarantine_records` row for each rejected resource, including its raw JSON. Unsupported resource types are counted but not quarantined.
 7. Upsert per-source lineage to the latest ingestion batch and upsert the source-specific patient identifier.
-8. Set the batch to `success`, populate accepted/rejected counts and completion time, then commit valid clinical rows, quarantine rows, lineage, and batch completion together.
+8. Set both lifecycle rows to `success`, calculate pipeline duration and duplicate/updated count, populate accepted/rejected counts and completion time, then commit valid clinical rows, quarantine rows, lineage, and lifecycle completion together.
 
-Repeated delivery of the same source Bundle is idempotent at the identified child-record level. Changed incoming fields update the existing record and lineage batch, while a child omitted from a later Bundle is retained. No deletion or tombstone semantics are implemented yet.
+Repeated delivery of the same source Bundle is idempotent at the identified child-record level. Changed incoming fields update the existing record and lineage batch, while a child omitted from a later Bundle is retained. The pipeline run counts the existing canonical patient and each existing accepted child as duplicate/updated for that attempt. No deletion or tombstone semantics are implemented yet.
 
 Two systems presenting the same FHIR patient ID now create separate canonical patients because the source system is part of the authoritative mapping. Multiple source identifiers can converge on one canonical patient only when a mapping is explicitly configured. When they do converge, source-aware child records coexist, while canonical patient demographics and denormalized patient-level source metadata reflect the latest import. The legacy `patients.fhir_patient_id` retains the value assigned when that canonical patient was created.
 
-If a batch-fatal parsing or persistence failure occurs after the initial batch commit, the clinical and quarantine transaction is rolled back. The service then loads the already durable batch in a new transaction, marks it `failed`, sets accepted count to zero, sets rejected count to the envelope record count, records completion time, and commits a sanitized error message. Known batch validation messages are retained verbatim; unexpected exceptions store only the exception class and a generic ingestion-failed description so payload/PHI text is not copied into the batch error field.
+If a batch-fatal parsing or persistence failure occurs after the initial commit, the clinical and quarantine transaction is rolled back. The service then loads the durable ingestion batch and pipeline run in a new transaction, marks both `failed`, sets accepted count to zero, sets rejected count to the envelope record count, records completion/duration, and commits the same sanitized error. Known batch validation messages are retained verbatim; unexpected exceptions store only the exception class and a generic ingestion-failed description so payload/PHI text is not copied into either error field.
 
-On a successful Bundle, accepted count means the selected Patient plus supported child resources mapped by the parser; rejected count equals stored quarantine rows; unsupported count covers other FHIR resource types. These three values are returned in `ingestion_summary`, while the legacy per-type `resource_counts` remains. Raw quarantine payloads never appear in the upload or SMART-import response or their audit metadata. Transport failures rejected before the ingestion service—invalid UTF-8, invalid JSON, a non-`.json` filename, or a non-Bundle top level—still return HTTP 400 without creating an ingestion batch.
+On a successful Bundle, accepted count means the selected Patient plus supported child resources mapped by the parser; rejected count equals stored quarantine rows; unsupported count covers other FHIR resource types. These three values are returned in `ingestion_summary`, while the legacy per-type `resource_counts` remains. The operational run stores received/accepted/rejected and duplicate/updated counts but does not add unsupported as a separate column. Raw quarantine payloads never appear in the upload or SMART-import response or their audit metadata. Transport failures rejected before the ingestion service—invalid UTF-8, invalid JSON, a non-`.json` filename, or a non-Bundle top level—still return HTTP 400 without creating an ingestion batch or pipeline run.
 
-Batch lifecycle and quarantine rows are queryable through SQLAlchemy or directly in the database. There is not yet an ingestion-batch/quarantine list API, remediation workflow, replay operation, retention policy, or frontend troubleshooting screen.
+Batch lifecycle and quarantine rows are queryable through SQLAlchemy, directly in the database, or through the protected investigation APIs and `/ingestion-runs` frontend. Batch lists include source and count summaries; quarantine lists include validation metadata but deliberately exclude `raw_payload`. A separate payload request returns one raw record and writes a `quarantine_payload_viewed` audit event. There is no remediation workflow, resolution state, replay operation, or retention policy.
 
 ### External SMART Health IT import
 
@@ -294,20 +302,23 @@ Export and import are separate steps. Generating a Bundle does not insert it int
 [`clinsight_hospital_pipeline.py`](../airflow/dags/clinsight_hospital_pipeline.py) defines one DAG named `clinsight_hospital_pipeline`. It has no schedule and no catch-up behavior; an operator must trigger each run from the Airflow UI or CLI. Its exact dependency chain is:
 
 ```text
-generate_hospital_data -> dbt_run -> dbt_test -> record_pipeline_metrics
+start_pipeline_run -> generate_hospital_data -> dbt_run -> dbt_test -> record_pipeline_metrics
 ```
 
 The tasks reuse existing project behavior instead of duplicating transformation logic:
 
-- generation runs Alembic and `scripts/generate_hospital_data.py`;
-- dbt run and test use the existing project, example profile, and `DBT_SELECT` value;
-- the final script queries all eight raw tables and all six dbt clinical views for the run's ingestion batch and prints one JSON count report to the task log.
+- the first task runs Alembic and idempotently creates/resets the durable `processing` row using the Airflow run ID and shared batch ID;
+- generation runs the existing `scripts/generate_hospital_data.py`;
+- dbt run and test use the existing project, example profile, and `DBT_SELECT` value through a command wrapper that preserves the dbt exit status while logging structured stage start/success/failure events and duration;
+- the final script queries all eight raw tables and all six dbt clinical views for the run's ingestion batch, marks the run `success`, persists duration/counts, and prints the detailed JSON count report to the task log.
 
-Every task retries twice with a five-minute delay. Parameters control patient count, seed, and batch ID. When `batch_id` is empty, the Airflow run ID becomes the shared raw-generation and metrics batch identifier. A maximum of one DAG run can be active, preventing simultaneous runs of this particular DAG from replacing the same explicitly supplied batch.
+Every task retries twice with a five-minute delay. Parameters control patient count, seed, and batch ID. When `batch_id` is empty, the Airflow run ID becomes the shared raw-generation, pipeline-run, and metrics batch identifier. A maximum of one DAG run can be active, preventing simultaneous runs of this particular DAG from replacing the same explicitly supplied batch. If any task exhausts its retries, the DAG failure callback creates or updates the run as `failed`, records a generic task-level error, calculates duration, and counts any batch-scoped raw rows available at that point.
 
 The Airflow image copies the existing backend and dbt projects and installs their minimal pipeline dependencies. `pip check` runs while the image builds. Its standalone metadata database and generated development login persist in the `clinsight_airflow` volume, while the application/raw/clinical data continues to use the normal PostgreSQL service.
 
-This is deliberately local orchestration, not a production Airflow deployment. It does not schedule runs, use a distributed executor, export FHIR, ingest interactive uploads, persist a pipeline-run entity, call the manual dbt audit endpoint, send alerts, or define production secrets. The count report is operational evidence in Airflow task logs; Change 8 is still responsible for durable pipeline metrics and status APIs.
+For a successful synthetic run, `received_count` is the total batch-scoped row count across the eight raw relations and `accepted_count` is the total across the six dbt clinical views; `rejected_count` is zero after successful dbt tests. A failed run can retain the available raw count, but it does not infer record-level dbt rejection counts. The aggregate success rate uses only terminal (`success` plus `failed`) runs as its denominator, excluding in-progress rows; average duration ignores rows without a duration.
+
+This is deliberately local orchestration, not a production Airflow deployment. It does not schedule runs, use a distributed executor, export FHIR, ingest interactive uploads, call the manual dbt audit endpoint, send alerts, or define production secrets. Structured events remain container/task logs rather than a centralized log platform, and the durable table is basic operational evidence rather than a full monitoring system.
 
 ## Unified clinical read behavior
 
@@ -334,11 +345,12 @@ Consequences of the current design:
 
 ## API and RBAC
 
-There are 13 routed API operations plus the public root health/message route.
+There are 19 routed API operations plus the public root health/message route.
 
 | Method and path | Roles | Behavior |
 | --- | --- | --- |
 | `POST /api/auth/login` | Public | Validate/create demo account and issue token. |
+| `GET /api/auth/demo-accounts` | Public, demo-only | Return active demo usernames, current database display names/roles, and descriptive permissions for login selection. |
 | `GET /api/auth/me` | Any authenticated | Return current user and UI permission labels. |
 | `GET /api/patients` | All four roles | Search/list unified patient records with limit/offset. |
 | `GET /api/patients/{id}` | All four roles | Return full chart and audit patient access. |
@@ -351,10 +363,17 @@ There are 13 routed API operations plus the public root health/message route.
 | `GET /api/demo-users` | All four roles | Return three product walkthrough personas. |
 | `GET /api/audit-logs` | Admin, data reviewer | Filter/paginate audit events. |
 | `POST /api/audit-logs/dbt-transformation` | Admin, data reviewer | Manually record triggered/completed dbt event. |
+| `GET /api/pipeline-runs` | Admin, data reviewer | Filter and paginate recent operational runs by pipeline, status, or source. |
+| `GET /api/pipeline-runs/metrics` | Admin, data reviewer | Return filtered success rate, record totals, average duration, and latest successful run. |
+| `GET /api/ingestion-batches` | Admin, data reviewer | Filter/paginate ingestion batches with source details and correlated quarantine counts. |
+| `GET /api/ingestion-batches/{id}/quarantine-records` | Admin, data reviewer | Filter/paginate quarantine metadata for one batch; raw payload is excluded. |
+| `GET /api/quarantine-records/{id}/payload` | Admin, data reviewer | Return one raw quarantined payload and audit that explicit view. |
 
-The four security roles are `admin`, `clinician`, `care_coordinator`, and `data_reviewer`. Route dependencies are the authoritative enforcement. The permission strings returned by `/auth/me` are descriptive; route checks do not dynamically evaluate those strings.
+The four security roles are `admin`, `clinician`, `care_coordinator`, and `data_reviewer`. Route dependencies remain the authoritative security enforcement. A centralized backend role-permission map supplies the descriptive capabilities returned by login and `/auth/me`; the frontend dynamically uses those returned capabilities for navigation, home access summaries, Data Intake visibility, protected-page redirects, and patient-chart panels. The API route dependencies still check roles rather than permission strings, so a client cannot gain backend access by modifying its locally stored capability list.
 
-The dbt transformation audit endpoint is not called by the Compose `dbt-run` job. A caller must invoke it separately, so dbt run auditing is currently an available API convention rather than an end-to-end automatic integration.
+The dbt transformation audit endpoint is not called by the Compose `dbt-run` job. A caller must invoke it separately, so dbt user auditing remains an available API convention rather than an end-to-end automatic integration. Airflow operational state is recorded independently in `pipeline_runs`.
+
+The same aggregate output is available internally with `cd backend && PYTHONPATH=. .venv/bin/python scripts/report_pipeline_run_metrics.py`, optionally filtered with `--pipeline-name` or `--source-system`. There is no frontend monitoring dashboard.
 
 ## Authentication and audit
 
@@ -369,9 +388,11 @@ On login, the backend lazily ensures four demo users exist:
 
 All use the shared demo password `clinsight-demo`. Passwords are PBKDF2-HMAC-SHA256 hashes with random salts and 120,000 iterations. Access tokens are compact HMAC-SHA256 JWT-shaped values implemented directly in the service; only subject, username, role, and expiration are encoded.
 
+The public demo-account discovery endpoint lazily ensures the four configured demo-user rows exist, then returns only active matching accounts in configured order. Display name and role come from the current `users` rows, so database edits appear on the login screen after reload and `is_active = false` removes an account from selection. This intentional username/role enumeration is suitable only for the current demo authentication model, not production identity management.
+
 The browser stores the token and user in `localStorage` and duplicates the token in a JavaScript-readable cookie so server-rendered patient/audit pages can authenticate. There is no refresh token, revocation list, session table, CSRF token, `HttpOnly` cookie, secure-cookie enforcement, user-management API, password-change flow, or external identity provider.
 
-Audit records include user/role, action, resource type/ID, derived patient ID, timestamp, and JSON metadata. Implemented events cover login, patient detail access, insight access, chart questions, uploads, external searches/imports, synthetic batch generation, and manually reported dbt transformations. Directory listing, quality-alert viewing, demo-persona viewing, audit-log viewing, and `/auth/me` are not audited.
+Audit records include user/role, action, resource type/ID, derived patient ID, timestamp, and JSON metadata. Implemented events cover login, patient detail access, insight access, chart questions, uploads, external searches/imports, synthetic batch generation, manually reported dbt transformations, and explicit raw quarantine-payload views. Batch/quarantine metadata listing, directory listing, quality-alert viewing, demo-persona viewing, audit-log viewing, and `/auth/me` are not audited.
 
 Audit rows are normal mutable database records. The repository does not implement append-only database permissions, cryptographic chaining, retention policy, PHI redaction, request correlation IDs, IP/user-agent capture, or export to a compliance/SIEM platform.
 
@@ -422,6 +443,8 @@ This evaluation confirms internal linkage, not clinical truth. In particular:
 Chart Q&A is a separate service from the insight report. It always starts with deterministic, patient-specific retrieval:
 
 - A1c/diabetes, blood pressure/hypertension, medications, allergies, encounters, recent observations, and active conditions have keyword-specific retrieval paths.
+- Explicit A1c and blood-pressure questions take precedence over the generic `recent` observation path. A question such as "Has this patient had an A1c recently?" therefore retrieves only matching A1c evidence rather than unrelated recent observations such as heart rate.
+- When an explicit A1c or blood-pressure question has no matching structured Observation, the deterministic service returns a specific not-found-in-the-available-records answer with low confidence and does not invoke an optional LLM. A matching Observation produces the normal evidence-backed path. General deterministic confidence is high only when evidence beyond the Patient row was retrieved.
 - Unrecognized questions fall back to a limited general chart selection.
 - Retrieval is capped at 24 evidence items.
 - A hard-coded phrase list refuses obvious diagnosis, prescribing, dose-change, discharge, and treatment-plan requests.
@@ -433,7 +456,7 @@ Returned LLM JSON is accepted only if it has a non-empty answer, all returned ci
 Current safety limitations include:
 
 - Keyword retrieval rather than semantic/vector retrieval.
-- No conversation history; every question is independent and the browser retains only five local responses.
+- No conversation history; every question is independent and the browser intentionally displays only the latest local response.
 - No model output moderation or medical-entity validation.
 - Citation validation checks identifiers, but does not verify that every factual sentence is entailed by the cited record.
 - The response returns all retrieved citations rather than only the LLM's selected citation IDs.
@@ -445,12 +468,41 @@ Current safety limitations include:
 
 | Route | Rendering and behavior |
 | --- | --- |
-| `/` | Client-rendered workspace. Reads stored user after hydration, shows role-aware ingestion tools, patient directory, and walkthrough personas. |
-| `/login` | Client form with the four demo accounts and shared password prefilled. |
-| `/patients/[id]` | Server-rendered protected chart. Reads token cookie, fetches user/patient and role-allowed data, then renders client chart chat inside it. |
-| `/audit` | Server-rendered protected audit list for admin/data reviewer. |
+| `/` | Client-rendered workspace. Reads stored user after hydration and shows a sticky role-aware header, access summary, patient-first dashboard, and optional compact data-intake workflows. |
+| `/login` | Client form that loads active demo identities/permissions from the database-backed discovery API, renders selectable role cards with workflow guidance, and prefills the shared password. |
+| `/patients/[id]` | Server-rendered protected chart with the shared workspace header. Reads token cookie, fetches user/patient and permission-allowed data, then renders client chart chat inside it. |
+| `/audit` | Server-rendered protected audit view with the shared workspace header for admin/data reviewer. It groups the latest 100 returned events alphabetically by user, separates system activity, and keeps each actor's events newest-first. |
+| `/ingestion-runs` | Server-authenticated admin/data-reviewer master-detail screen with the shared workspace header for browsing recent batches, filtering quarantined rows, and explicitly revealing audited raw payloads. |
 
 The root page itself does not redirect unauthenticated users; it shows sign-in guidance and hides protected controls. API RBAC remains authoritative.
+
+The first home-page redesign increment separates navigation, identity, and session actions. Its sticky header contains the product identity; Patients and permitted Data Intake, Ingestion Review, and Audit Trail destinations; and a user menu containing the signed-in name, username, role, and distinctly styled Sign Out action. The Patients and Data Intake links scroll to labeled home-page sections, while unavailable destinations are omitted according to the existing frontend role helpers.
+
+The second redesign increment replaces the project-marketing hero with a compact role-aware welcome and access summary. Each of the four roles receives a plain-language focus statement and four capabilities that match current frontend presentation and API access. A successful upload/import appears as a separate live status card with an explicit Open Patient Chart action. Signed-out visitors instead see protected-workspace guidance and a conventional sign-in button.
+
+The third redesign increment makes Patient Directory the first and wider dashboard column. For admins and data reviewers, Data Intake is a secondary panel whose local-file and SMART sandbox paths start collapsed and reveal only one existing import form at a time. Clinicians and care coordinators no longer receive an unavailable ingestion placeholder, signed-out visitors no longer receive empty dashboard placeholders, and the empty-directory message assigns data import to the roles that can actually perform it.
+
+The fourth redesign increment removes the Interview Personas panel from the authenticated workspace so it cannot be mistaken for the active account. Clinician and care-coordinator workspaces use the full dashboard width because they have no secondary Data Intake panel. The login page is now the single UI location for choosing and understanding demo accounts: identity, role, and permission data load from `/api/auth/demo-accounts`, while each role retains three frontend workflow explanations. The protected conceptual `/api/demo-users` endpoint and its unused client component still exist, but the home page no longer calls or displays them.
+
+The login form uses a 16-pixel vertical grid gap so the demo-account selector, selected-access summary, password field, and submit action remain visually distinct instead of touching.
+
+The fifth redesign increment centralizes the authenticated permission description. The backend now includes chart chat, ingestion investigation, audit logs, pipeline runs, dbt audit reporting, and demo-role access alongside the earlier patient/insight/quality/import capabilities. Frontend helpers check the `AuthUser.permissions` list instead of inferring access from `AuthUser.role`, and one label catalog converts capability codes into user-facing access descriptions. The home page refreshes `/auth/me` after restoring a browser session so a previously stored user automatically receives permission-definition changes. Login guidance remains static because it is shown before authentication, while backend route roles remain the enforcement boundary.
+
+The sixth redesign increment applies the same sticky workspace header to Patient Chart, Audit Trail, and Ingestion Review. Permission-allowed destinations, identity details, the user menu, and Sign Out now behave consistently on every protected page. Patient, ingestion, and audit destinations receive an active-page treatment with `aria-current`, and home-section links use cross-page `/#patient-directory` and `/#data-intake` targets. Secondary pages retain their contextual Back to Workspace links beneath the global header.
+
+The seventh redesign increment improves keyboard and motion accessibility. The account control is a managed button/dialog interaction with `aria-expanded`, Escape dismissal and focus return, outside-click dismissal, and native keyboard activation. Links, buttons, and fields share a visible focus ring, while `prefers-reduced-motion` reduces animation and transition durations and disables smooth scrolling. A briefly focus-visible Skip to Main Content link was initially added and then removed at product direction. These remaining behaviors passed TypeScript/production compilation but do not yet have automated browser-interaction tests.
+
+The eighth redesign increment adds an explicit home-page session-initialization state. The client restores the locally stored account, validates it and refreshes permissions through `/auth/me`, and renders role-dependent navigation/content only after that request resolves. During validation it shows an `aria-live` status with a reduced-motion-compatible loading mark. Invalid or inactive sessions are cleared before the signed-out workspace renders, preventing a transient Sign In header, missing navigation, or stale access summary from flashing for authenticated users.
+
+The signed-out header shows only the product identity. The protected-workspace card is the single Sign In entry point.
+
+The ninth redesign increment removes unavailable patient-chart presentation instead of rendering access-denied placeholders. The grounded summary card exists only with `view_grounded_ai_summary`, the care-gap card exists only with `view_care_gaps`, and the header's quality-alert count exists only with `view_quality_alerts`. Existing inconsistency, grounding, quality, and provenance sections already use their corresponding authenticated permissions. The backend remains authoritative and still rejects unauthorized endpoint requests.
+
+The tenth redesign increment makes chart Q&A a single-result interaction that matches its stateless backend behavior. Submitting a question clears the prior result and uses the same result region for the pending state, request error, or latest answer. Retrieved citations are presented under an explicit `Sources reviewed (N)` heading as full-width vertical resource cards with resource type, clinical label, excerpt, record identity/date, and role-gated source-system/batch provenance. This prevents independent answers from accumulating like a conversation and prevents multiple source records from reading as one wrapped line.
+
+The audit grouping is presentation-only. The database and `GET /api/audit-logs` remain globally chronological, and the page groups only the latest 100 records fetched from that API. Consequently, each displayed user count is a count within the current page rather than that user's lifetime audit total. A dedicated 24-pixel section gap separates the audit page header from the grouped-event panel, matching the spacing used by the other protected detail pages.
+
+The ingestion investigation page loads up to the latest 100 batches and defaults to the newest batch containing quarantine rows when available. Operators can filter the loaded batch list, select a batch, and apply server-side resource-type, error-code, source-record-ID/error-message filters to up to 200 quarantine rows. Raw payloads start collapsed, are fetched only when the operator clicks the audited view button, and are cached in that browser component while the page remains mounted. The screen is read-only: it cannot edit, resolve, delete, replay, or promote a quarantined record.
 
 ### Role-specific chart presentation
 
@@ -471,13 +523,14 @@ The timeline merges all five child resource types and sorts descending by parsed
 
 At this snapshot:
 
-- `cd backend && PYTHONPATH=. .venv/bin/python -m pytest -q`: **52 passed**.
-- Airflow DAG/task contract tests: **successful**, covering the exact four-task chain, retry policy, strict shell commands, existing generator/dbt commands, shared batch templating, manual schedule, Compose profile isolation, and image declarations.
+- `cd backend && .venv/bin/python -m pytest -q`: **79 passed**.
+- Airflow DAG/task contract tests: **successful**, covering the exact five-task chain, retry policy, strict shell commands, existing generator/dbt commands, durable start/finalize commands, shared run/batch templating, terminal failure callback, manual schedule, Compose profile isolation, and image declarations.
 - Pipeline metrics tests against batch-scoped SQLite raw and clinical fixtures: **successful**.
 - `docker-compose.yml` YAML parsing/profile assertions and Python compilation of the new DAG/report files: **successful**.
 - Alembic `0010 -> 0011 -> 0010 -> 0011` on SQLite with a historical processed batch: **successful**. Upgrade preserved counts/timestamps and mapped `processed` to `success`; downgrade restored the legacy fields/status; the final revision is `0011_durable_batch_states`.
 - Alembic `0011 -> 0012 -> 0011 -> 0012` on SQLite: **successful**. The quarantine table and indexes were created, removed on downgrade, and restored; the final revision is `0012_quarantine_records`. PostgreSQL offline SQL compilation emits `raw_payload JSONB NOT NULL`.
 - Alembic `0012 -> 0013 -> 0012 -> 0013` on isolated SQLite: **successful**. The standalone source-identifier index was created, removed on downgrade, and restored; the final revision is `0013_patient_directory_indexes`.
+- Alembic `0013 -> 0014 -> 0013 -> 0014` on isolated SQLite: **successful**. The pipeline-run table, 16 columns, seven indexes, and composite run identity constraint were created, removed on downgrade, and restored; the final revision is `0014_pipeline_runs`. PostgreSQL offline SQL compilation emits timezone-aware start/completion timestamps and the expected indexes/constraint.
 - Alembic `upgrade -> downgrade 0009 -> upgrade` on SQLite: **successful**, ending at `0010_typed_clinical_dates`.
 - A seeded revision-0008 patient upgraded to `0009` with its source identifier backfilled; a second source then stored the same FHIR patient ID as a separate patient and mapping: **successful**.
 - Seeded legacy string values upgraded through `0010`: valid date-only/UTC/offset/naive ISO values became typed timestamps, invalid and null values became null, all six SQLite columns report `DATETIME`, and downgrade/re-upgrade preserved the converted values: **successful**.
@@ -496,30 +549,36 @@ Backend coverage includes:
 - explicit multi-source identifiers resolving to one manually mapped canonical patient;
 - source systems, ingestion batches, patient identifiers, and curated lineage;
 - durable success/failure batch finalization, rollback of forced mid-ingestion clinical writes, queryable failed state, and sanitized persisted errors;
+- matching FHIR pipeline-run success/failure transitions, duration and record counts, sanitized failure details, and duplicate/updated counts on exact re-upload;
 - mixed-validity Bundles where malformed supported children are quarantined, valid siblings persist, unsupported types are counted separately, and raw quarantine payloads remain absent from API output;
 - invalid JSON and non-object/non-Bundle top-level uploads remaining batch-fatal without clinical or quarantine rows;
 - date-only, UTC, timezone-offset, empty, null, and invalid temporal parsing;
 - typed ORM persistence with stable UTC ISO API serialization;
 - chronological ordering by actual instant rather than lexical representation;
 - quality rules and grounded insight evaluation;
-- deterministic chat, treatment refusal, mocked GitHub Models use, and chat audit;
+- deterministic chat, topic-specific A1c retrieval and missing-result confidence, treatment refusal, mocked GitHub Models use, and chat audit;
 - manually created dbt-shaped SQLite clinical tables flowing through patient, quality, and insight APIs;
 - combined application/dbt patient-directory paging with exact totals, boundary offsets, stable descending order, application-row precedence on numeric-ID overlap, mapped application source-ID search, dbt source-patient-ID search, and assertions that the executed page query contains SQL `UNION ALL`, window deduplication, `LIMIT`, and `OFFSET`;
 - authentication, RBAC, patient access audit, audit filtering/reporting;
+- exact permission contracts for all four demo accounts and login/`/auth/me` consistency;
+- public demo-account discovery using current database names and excluding inactive accounts;
+- ingestion-batch/quarantine filtering, metadata-only list responses, admin/data-reviewer access, clinician denial, missing-record responses, and audited raw-payload retrieval;
 - mocked SMART search/import;
 - raw operational models and deterministic generator scenarios;
 - generated FHIR validity and re-upload;
-- Airflow pipeline definition/configuration and batch-scoped pipeline count reporting.
+- Airflow pipeline definition/configuration and batch-scoped pipeline count reporting;
+- Airflow durable run finalization, structured dbt command success/failure/duration events, real command-wrapper argument parsing/exit propagation, protected run-list RBAC, and aggregate pipeline metrics;
+- eleven named FHIR teaching bundles covering success, update, unsupported resources, resource-level quarantine variants, and batch-fatal variants, with twelve expectation tests.
 
 Important test boundaries:
 
-- There are no frontend component/browser tests.
+- There are no frontend component/browser tests; the ingestion investigation screen is covered by a successful production TypeScript/Next.js build and its backend API tests, not automated interaction tests.
 - There is no automated full PostgreSQL + dbt + FastAPI end-to-end test in the test suite.
 - External FHIR and LLM HTTP calls are mocked.
 - Quarantine runtime behavior is exercised with SQLite JSON; PostgreSQL `JSONB` DDL is compile-validated but was not executed against a live PostgreSQL server for this change.
 - The dbt-shaped API test creates compatible SQLite tables; it does not run dbt SQL.
 - The five timestamp-aware dbt mart expressions were not executed locally because this machine has neither Docker nor a `dbt` executable.
-- For the same reason, the Airflow image was not built and the DAG was not executed against PostgreSQL/dbt on this machine; the automated Change 4 coverage validates its Python contract, commands, Compose structure, and SQLite metrics behavior.
+- For the same reason, the Airflow image was not built and the DAG was not executed against PostgreSQL/dbt on this machine; automated coverage validates its Python contract, commands, callbacks, structured wrapper behavior, Compose structure, and SQLite run/metrics behavior.
 - No visible CI workflow runs these checks on commit.
 
 ## Current implementation gaps and risks
@@ -534,8 +593,9 @@ The most important engineering gaps, in priority order, are:
 6. **Grounding checks are structural, not entailment checks.** They prove citations resolve, but not that conclusions are clinically correct or fully supported.
 7. **Audit is useful but not compliance-grade.** It is neither immutable nor comprehensive, and dbt audit reporting is manual.
 8. **Scale behavior remains partly demo-oriented.** Patient-directory rows are now filtered, deduplicated, sorted, and paged in SQL, but exact totals, leading-wildcard search, and deep offsets can remain costly. SMART retrieval is synchronous, and insight/chat rules run in the request process.
-9. **Operational readiness is limited.** The Airflow DAG makes local runs retryable and visible, but it is manual standalone orchestration with log-only completion counts. Compose contains demo database credentials; there is no production secrets flow, TLS/reverse-proxy config, distributed worker strategy, alerting, tracing, backup policy, rate limiting, or CI/CD.
+9. **Operational readiness is limited.** FHIR and Airflow lifecycle state/counts are durable and queryable, but Airflow remains manual standalone orchestration and structured events remain local logs. Compose contains demo database credentials; there is no production secrets flow, TLS/reverse-proxy config, distributed worker strategy, centralized logging, alerting, tracing, backup policy, rate limiting, or CI/CD.
 10. **Clinical governance is absent.** There is no ruleset approval/version lifecycle, clinician feedback workflow, model governance, prompt/version logging, or validation against clinical standards.
+11. **Quarantine operations are investigation-only.** The UI can expose validation evidence and audited payloads, but has no assignment, comments, resolution state, correction workflow, replay, or retention enforcement.
 
 ## What the repository can credibly demonstrate today
 
@@ -544,6 +604,8 @@ ClinSight AI currently demonstrates an end-to-end, source-aware clinical data pr
 ```text
 FHIR or synthetic operational input
   → parsing/normalization or manually orchestrated dbt transformation
+  → durable pipeline lifecycle, counts, duration, and source/batch linkage
+  → role-restricted quarantine investigation with audited payload access
   → unified patient record access
   → role-aware longitudinal chart
   → data quality and deterministic clinical rules
